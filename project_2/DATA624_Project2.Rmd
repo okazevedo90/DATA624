@@ -24,3 +24,17 @@ library(zoo)
 library(writexl)
 
 ```
+
+## Import Data
+```{r}
+# import data from github
+train_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentData.xlsx"
+test_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentEvaluation.xlsx"
+
+train_data = import(train_data_url)
+test_data = import(test_data_url)
+
+head(train_data)
+head(test_data)
+```
+

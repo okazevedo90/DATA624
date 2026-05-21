@@ -22,7 +22,28 @@ library(rio)
 library(skimr)
 library(zoo)
 library(writexl)
+library(readxl)
+library(caret)
+library(dplyr)
+library(corrplot)
+library(nnet)
+library(randomForest)
 
+knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
+  kbl(df, format = "html", escape = FALSE, caption = caption) |>
+    kable_styling(
+      full_width = F,
+      position = position,
+      bootstrap_options = c("striped")) |>
+    row_spec(0, bold = T,
+             color = "white",
+             background = color,
+             extra_css = paste("border: 2px solid", color, ";")) |>
+    row_spec(dim(df)[1], extra_css = paste("border-bottom: 2px solid", color, ";")) |>
+    column_spec(1, extra_css = paste("border-left: 2px solid", color, ";")) |>
+    column_spec(dim(df)[2], extra_css = paste("border-right: 2px solid", color, ";")) |>
+    scroll_box(width = "100%", height = ifelse(((nrow(df)+1)*45)+50 > 450, "450px", paste0(((nrow(df)+1)*45)+50, "px")), box_css = "border: 1px solid #FFFFFF;")
+}
 ```
 
 ## Import Data
@@ -37,4 +58,624 @@ test_data = import(test_data_url)
 head(train_data)
 head(test_data)
 ```
+
+```{r}
+# =========================================================
+# INITIAL DATA EXPLORATION 
+# =========================================================
+
+# View dataset structure
+str(train_data)
+
+# Summary statistics
+summary(train_data)
+
+# Dataset dimensions
+dim(train_data)
+
+# Detailed overview
+skim(train_data)
+
+
+```
+
+
+
+
+```{r}
+# =========================================================
+# CHECK MISSING VALUES
+# =========================================================
+
+# Count missing values in each column
+missing_values <- colSums(is.na(train_data))
+
+# Display missing value counts
+missing_values
+
+# Create missing value table
+missing_table <- data.frame(
+  Variable = names(missing_values),
+  Missing_Count = missing_values
+)
+
+missing_table
+
+
+```
+
+
+
+
+```{r}
+# =========================================================
+#  HISTOGRAMS FOR NUMERIC VARIABLES
+# =========================================================
+
+# Select numeric columns only
+numeric_cols <- train_data %>%
+  select(where(is.numeric))
+
+# Create histograms for all numeric variables
+# for(col in names(numeric_cols)){
+#   print(
+#     ggplot(train_data, aes(x = .data[[col]])) +
+#       geom_histogram(
+#         bins = 30,
+#         fill = "skyblue",
+#         color = "black"
+#       ) +
+#       labs(
+#         title = paste("Histogram of", col),
+#         x = col,
+#         y = "Frequency"
+#       ) +
+#       theme_minimal()
+#   )
+# }
+
+
+train_data %>%
+  select(where(is.numeric)) %>%
+  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Histograms of All Numeric Variables") +
+  theme_minimal()
+
+
+
+```
+
+
+
+
+
+```{r}
+
+# =========================================================
+#  BOXPLOTS FOR OUTLIER DETECTION
+# =========================================================
+
+for(col in names(numeric_cols)){
+  print(
+    ggplot(train_data, aes(y = .data[[col]])) +
+      geom_boxplot(fill = "tomato") +
+      labs(
+        title = paste("Boxplot of", col),
+        y = col
+      ) +
+      theme_minimal()
+  )
+}
+
+train_data %>%
+  select(where(is.numeric)) %>%
+  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(y = value)) +
+  geom_boxplot(fill = "tomato") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Boxplots of All Numeric Variables") +
+  theme_minimal()
+
+
+
+```
+
+
+
+
+
+```{r}
+# =========================================================
+#  CORRELATION ANALYSIS
+# =========================================================
+
+# Compute correlation matrix
+cor_matrix <- cor(
+  numeric_cols,
+  use = "pairwise.complete.obs"
+)
+
+# Correlation heatmap
+corrplot(
+  cor_matrix,
+  method = "color",
+  type = "upper",
+  tl.cex = 0.7
+)
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+# =========================================================
+#  SCATTERPLOTS VS PH
+# =========================================================
+
+# Remove PH from predictor list
+predictor_cols <- setdiff(names(numeric_cols), "PH")
+
+# Scatterplots against PH
+# for(col in predictor_cols){
+#   print(
+#     ggplot(train_data, aes(x = .data[[col]], y = PH)) +
+#       geom_point(alpha = 0.6, color = "blue") +
+#       geom_smooth(method = "lm", se = FALSE, color = "red") +
+#       labs(
+#         title = paste(col, "vs PH"),
+#         x = col,
+#         y = "PH"
+#       ) +
+#       theme_minimal()
+#   )
+# }
+
+train_data %>%
+  select(where(is.numeric)) %>%
+  tidyr::pivot_longer(-PH, names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value, y = PH)) +
+  geom_point(alpha = 0.3, color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(title = "Predictors vs PH") +
+  theme_minimal()
+
+
+```
+
+
+
+
+```{r}
+# =========================================================
+#  FEATURE ENGINEERING
+# =========================================================
+
+# Convert Brand Code to categorical variable
+if("Brand Code" %in% names(train_data)) {
+
+  train_data$`Brand Code` <- as.character(
+    train_data$`Brand Code`
+  )
+
+  train_data$`Brand Code`[
+    is.na(train_data$`Brand Code`)
+  ] <- "Unknown"
+
+  train_data$`Brand Code` <- as.factor(
+    train_data$`Brand Code`
+  )
+
+  test_data$`Brand Code` <- as.character(
+    test_data$`Brand Code`
+  )
+
+  test_data$`Brand Code`[
+    is.na(test_data$`Brand Code`)
+  ] <- "Unknown"
+
+  test_data$`Brand Code` <- factor(
+    test_data$`Brand Code`,
+    levels = levels(train_data$`Brand Code`)
+  )
+}
+
+
+
+
+```
+
+
+
+
+```{r}
+
+# =========================================================
+# SECTION 10 — SEPARATE TARGET VARIABLE
+# =========================================================
+
+# PH is the prediction target
+y <- train_data$PH
+
+# Remove PH from predictors
+x <- train_data %>%
+  select(-PH)
+
+
+
+```
+
+
+
+
+```{r}
+
+# =========================================================
+#  REMOVE NEAR-ZERO VARIANCE VARIABLES
+# =========================================================
+
+# Identify low-information predictors
+nzv <- nearZeroVar(x)
+
+# Remove them if any exist
+if(length(nzv) > 0){
+
+  x <- x[, -nzv]
+}
+
+# Match columns in test dataset
+test_processed <- test_data[, names(x)]
+
+
+```
+
+
+
+
+```{r}
+# =========================================================
+#  REMOVE HIGHLY CORRELATED VARIABLES
+# =========================================================
+
+# Keep numeric variables only
+numeric_x <- x %>%
+  select(where(is.numeric))
+
+# Correlation matrix
+cor_matrix <- cor(
+  numeric_x,
+  use = "pairwise.complete.obs"
+)
+
+# Identify highly correlated variables
+highCorr <- findCorrelation(
+  cor_matrix,
+  cutoff = 0.90
+)
+
+# Remove correlated predictors
+if(length(highCorr) > 0){
+
+  highCorr_names <- colnames(numeric_x)[highCorr]
+
+  x <- x[, !(names(x) %in% highCorr_names)]
+
+  test_processed <- test_processed[, names(x)]
+}
+
+
+
+```
+
+
+
+
+```{r}
+
+# =========================================================
+#  PREPROCESSING
+# =========================================================
+
+# Apply:
+# 1. Median imputation
+# 2. Centering
+# 3. Scaling
+
+preprocess_model <- preProcess(
+  x,
+  method = c(
+    "medianImpute",
+    "center",
+    "scale"
+  )
+)
+
+# Apply preprocessing to training data
+x_processed <- predict(
+  preprocess_model,
+  x
+)
+
+# Apply SAME preprocessing to test data
+test_processed <- predict(
+  preprocess_model,
+  test_processed
+)
+
+
+```
+
+
+
+
+```{r}
+
+# =========================================================
+#  FINAL DATASET CHECKS
+# =========================================================
+
+# Check for remaining missing values
+colSums(is.na(x_processed))
+
+# Final dataset dimensions
+dim(x_processed)
+
+# Preview processed dataset
+head(x_processed)
+
+
+```
+
+
+
+
+```{r}
+# =========================================================
+#  CREATE FINAL MODELING DATASET
+# =========================================================
+
+# Combine target variable with processed predictors
+final_train_data <- cbind(
+  PH = y,
+  x_processed
+)
+
+# Preview final dataset
+head(final_train_data)
+
+
+
+```
+
+
+
+
+```{r}
+
+# =========================================================
+#  EXPORT FINAL DATASETS
+# =========================================================
+
+# Export processed training dataset
+write_xlsx(
+  final_train_data,
+  "Processed_Training_Data.xlsx"
+)
+
+# Export processed test dataset
+write_xlsx(
+  test_processed,
+  "Processed_Test_Data.xlsx"
+)
+
+
+```
+
+
+## Model Development {.tabset}
+```{r}
+# split data
+set.seed(10)
+
+trainingRows <- createDataPartition(final_train_data$PH, p = .80, list= FALSE)
+
+# train 
+train_x <- final_train_data[index, ] %>% select(-PH)
+train_y <- final_train_data[index, 'PH']
+
+# test
+test_x <- final_train_data[-index, ] %>% select(-PH)
+test_y <- final_train_data[-index, 'PH']
+```
+
+### Linear Regression
+```{r}
+set.seed(10)
+
+# 10-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 10)
+
+lmModel <- train(train_x, train_y, method = "lm", trControl = ctrl) 
+
+lm_pred <- predict(lmModel,  test_x)
+lm_results = postResample(pred = lm_pred, obs = test_y)
+lm_results
+```
+
+### Partial Least Squares
+```{r}
+set.seed(10)
+
+plsModel <- train(train_x, train_y, 
+                 method = "pls", 
+                 tuneLength = 20, trControl = ctrl,
+                 preProc = c("center", "scale"),
+                 validation = "CV")
+
+pls_pred <- predict(plsModel, test_x)
+pls_results = postResample(pls_pred, test_y)
+pls_results
+```
+
+### Neural Network
+```{r, warning=FALSE}
+# remove predictors to ensure maximum abs pairwise corr between predictors < 0.75
+tooHigh <-findCorrelation(cor(train_x[, -1]), cutoff = .75)
+
+train_x_nnet <- train_x[, -tooHigh]
+test_x_nnet <- test_x[, -tooHigh]
+
+nnetGrid <- expand.grid(
+  .decay = c(0, 0.01, .1),.size = c(1:5),
+  .bag = FALSE)
+
+# tune
+nnetTune <- train(train_x_nnet, train_y,
+                  method = "avNNet",
+                  tuneGrid = nnetGrid,
+                  trControl = ctrl,
+                  preProc = c("center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE,
+                  MaxNWts =  5 * (ncol(train_x_nnet) + 1) + 5 + 1,
+                  maxit = 50)
+
+ 
+# review performance metrics
+nnetPred <- predict(nnetTune, newdata = test_x)
+nnet_results = postResample(nnetPred, test_y)
+nnet_results
+```
+
+### MARS
+```{r}
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+# Fix the seed so that the results can be reproduced
+set.seed(10)
+marsTuned <- train(train_x, train_y, 
+  method = "earth",
+  # Explicitly declare the candidate models to test
+  tuneGrid = marsGrid,
+  trControl = trainControl(method = "cv"))
+
+# review performance metrics
+marsPred <- predict(marsTuned, newdata = test_x)
+mars_results = postResample(marsPred, test_y)
+mars_results
+```
+
+### SVM
+```{r}
+# svm <- train(train_x[-1], train_y,
+#   method = "svmRadial",
+#   preProc = c("center", "scale"),
+#   tuneLength = 14,
+#   trControl = trainControl(method = "cv"))
+# 
+# # review performance metrics
+# svmPred <- predict(svm, newdata = test_x)
+# svm_results = postResample(svmPred, test_y)
+# svm_results
+```
+
+
+#### Random Forest
+```{r}
+set.seed(10)
+rfModel <- randomForest(train_x, train_y, 
+                        importance = TRUE,
+                        ntree = 1000)
+
+rf_pred <- predict(rfModel, test_x)
+rf_results = postResample(pred = rf_pred, obs = test_y)
+rf_results
+```
+
+
+#### Boosted Tree
+```{r}
+gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1),
+                       n.minobsinnode = 10)
+
+set.seed(10)
+gbm_chem <- train(train_x, train_y,
+                 method = "gbm",
+                 tuneGrid = gbmGrid,
+                 verbose = FALSE)
+
+gbm_pred <- predict(gbm_chem, test_x)
+gbm_results = postResample(pred = gbm_pred, obs = test_y)
+gbm_results
+```
+
+#### Cubist
+```{r}
+cubist_model <- train(train_x, train_y,
+  method = "cubist",
+  trControl = trainControl(method = "cv"),
+  tuneGrid = expand.grid(committees = c(1, 5, 10), neighbors = c(0, 3, 5, 7))
+)
+
+
+cubist_pred <- predict(cubist_model, test_x)
+cubist_results = postResample(pred = cubist_pred, obs = test_y)
+cubist_results
+```
+
+## Model Evaluation
+```{r}
+# compile all model performance results
+final_results = rbind(
+  lm_results,
+  mars_results,
+  pls_results,
+  nnet_results,
+  rf_results,
+  gbm_results,
+  cubist_results
+)
+# add model name column
+final_results = data.frame(cbind(Model = c(
+  'Linear Regression',
+  'MARS',
+  'Partial Least Squares',
+  'Neural Network',
+  'Random Forest',
+  'Boosted Tree',
+  'Cubist'
+  ), final_results))
+rownames(final_results) <- NULL
+# output results
+knit_table(final_results |> arrange(RMSE), 'Model Performance Metrics')
+```
+
+## Feature Importance
+```{r}
+plot(varImp(cubist_model), top = 10,
+     main = "Cubist Model Variable Importance - Top 10")
+
+
+# cubist_vi <- 
+# varImp(cubist_model$finalModel, scale = FALSE)
+# knit_table(rownames_to_column(cubist_vi, var = "Predictor") |> arrange(desc(Overall)), 'Cubist Variable Importance')
+```
+
+
+## Final Predictions
+```{r}
+final_pred <- predict(cubist, test_processed)
+final_pred
+```
+
 

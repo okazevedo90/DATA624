@@ -29,6 +29,7 @@ library(corrplot)
 library(nnet)
 library(randomForest)
 library(fastDummies)
+library(modEvA)
 
 knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
   kbl(df, format = "html", escape = FALSE, caption = caption) |>
@@ -113,32 +114,22 @@ numeric_cols <- train_data %>%
   select(where(is.numeric))
 
 # Create histograms for all numeric variables
-# for(col in names(numeric_cols)){
-#   print(
-#     ggplot(train_data, aes(x = .data[[col]])) +
-#       geom_histogram(
-#         bins = 30,
-#         fill = "skyblue",
-#         color = "black"
-#       ) +
-#       labs(
-#         title = paste("Histogram of", col),
-#         x = col,
-#         y = "Frequency"
-#       ) +
-#       theme_minimal()
-#   )
-# }
-
-
-train_data %>%
-  select(where(is.numeric)) %>%
-  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
-  ggplot(aes(x = value)) +
-  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
-  facet_wrap(~ variable, scales = "free") +
-  labs(title = "Histograms of All Numeric Variables") +
-  theme_minimal()
+for(col in names(numeric_cols)){
+  print(
+    ggplot(train_data, aes(x = .data[[col]])) +
+      geom_histogram(
+        bins = 30,
+        fill = "skyblue",
+        color = "black"
+      ) +
+      labs(
+        title = paste("Histogram of", col),
+        x = col,
+        y = "Frequency"
+      ) +
+      theme_minimal()
+  )
+}
 ```
 
 ## Outlier Detection
@@ -159,15 +150,6 @@ for(col in names(numeric_cols)){
       theme_minimal()
   )
 }
-
-train_data %>%
-  select(where(is.numeric)) %>%
-  tidyr::pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
-  ggplot(aes(y = value)) +
-  geom_boxplot(fill = "tomato") +
-  facet_wrap(~ variable, scales = "free") +
-  labs(title = "Boxplots of All Numeric Variables") +
-  theme_minimal()
 ```
 
 ## Correlation Analysis
@@ -201,31 +183,19 @@ corrplot(
 predictor_cols <- setdiff(names(numeric_cols), "PH")
 
 # Scatterplots against PH
-# for(col in predictor_cols){
-#   print(
-#     ggplot(train_data, aes(x = .data[[col]], y = PH)) +
-#       geom_point(alpha = 0.6, color = "blue") +
-#       geom_smooth(method = "lm", se = FALSE, color = "red") +
-#       labs(
-#         title = paste(col, "vs PH"),
-#         x = col,
-#         y = "PH"
-#       ) +
-#       theme_minimal()
-#   )
-# }
-
-train_data %>%
-  select(where(is.numeric)) %>%
-  tidyr::pivot_longer(-PH, names_to = "variable", values_to = "value") %>%
-  ggplot(aes(x = value, y = PH)) +
-  geom_point(alpha = 0.3, color = "blue") +
-  geom_smooth(method = "lm", se = FALSE, color = "red") +
-  facet_wrap(~ variable, scales = "free_x") +
-  labs(title = "Predictors vs PH") +
-  theme_minimal()
-
-
+for(col in predictor_cols){
+  print(
+    ggplot(train_data, aes(x = .data[[col]], y = PH)) +
+      geom_point(alpha = 0.6, color = "blue") +
+      geom_smooth(method = "lm", se = FALSE, color = "red") +
+      labs(
+        title = paste(col, "vs PH"),
+        x = col,
+        y = "PH"
+      ) +
+      theme_minimal()
+  )
+}
 ```
 
 # Data Prep
@@ -264,19 +234,17 @@ if("Brand Code" %in% names(train_data)) {
     levels = levels(train_data$`Brand Code`)
   )
 }
-```
 
-```{r}
+# Transform Brand Code into Dummy Variables
 train_data = dummy_cols(train_data, select_columns = "Brand Code", remove_selected_columns = TRUE)
 test_data = dummy_cols(test_data, select_columns = "Brand Code", remove_selected_columns = TRUE)
 ```
 
 
-
 ## Seperate Target Variable
 ```{r}
 # =========================================================
-# SECTION 10 — SEPARATE TARGET VARIABLE
+# SEPARATE TARGET VARIABLE
 # =========================================================
 
 # PH is the prediction target
@@ -337,7 +305,6 @@ if(length(highCorr) > 0){
 
   test_processed <- test_processed[, names(x)]
 }
-
 ```
 
 
@@ -428,6 +395,7 @@ write_xlsx(
 ```
 
 
+**UPDATE - AHMED**
 ```{r}
 final_train_data <- final_train_data[!is.na(final_train_data$PH), ]
 ```
@@ -442,13 +410,9 @@ trainingRows <- createDataPartition(final_train_data$PH, p = .80, list= FALSE)
 
 # train 
 train <- final_train_data[trainingRows, ] 
-# train_x <- final_train_data[trainingRows, ] |> select(-PH)
-# train_y <- final_train_data[trainingRows, 'PH']
 
 # test
 test = final_train_data[-trainingRows, ]
-# test_x <- final_train_data[-trainingRows, ] |> select(-PH)
-# test_y <- final_train_data[-trainingRows, 'PH']
 ```
 
 # Model Development {.tabset}
@@ -468,7 +432,9 @@ lmModel <- train(PH ~ .,
 # review performance metrics
 lm_pred <- predict(lmModel,  test)
 lm_results = postResample(pred = lm_pred, obs = test$PH)
-lm_results
+lm_results_df = rownames_to_column(data.frame(lm_results), var = "Metric")
+colnames(lm_results_df) = c('Metric', 'Score')
+knit_table(lm_results_df, 'Linear Regression Performance')
 ```
 
 ## Partial Least Squares
@@ -486,36 +452,39 @@ plsModel <- train(PH ~ .,data = train,
 # review performance metrics
 pls_pred <- predict(plsModel, test)
 pls_results = postResample(pls_pred, test$PH)
-pls_results
+pls_results_df = rownames_to_column(data.frame(pls_results), var = "Metric")
+colnames(pls_results_df) = c('Metric', 'Score')
+knit_table(pls_results_df, 'Partial Least Squares Performance')
 ```
 
 ## Neural Network
 ```{r, warning=FALSE}
 # remove predictors to ensure maximum abs pairwise corr between predictors < 0.75
-tooHigh <-findCorrelation(cor(train_x[, -1]), cutoff = .75)
+tooHigh <-findCorrelation(cor(train[, -1]), cutoff = .75)
 
-train_x_nnet <- train_x[, -tooHigh]
-test_x_nnet <- test_x[, -tooHigh]
+train_x_nnet <- train[, -tooHigh]
+test_x_nnet <- test[, -tooHigh]
 
 nnetGrid <- expand.grid(
   .decay = c(0, 0.01, .1),.size = c(1:5),
   .bag = FALSE)
 
 # fit model
-nnetTune <- train(PH ~ .,data = train,
+nnetTune <- train(PH ~ .,data = train_x_nnet,
                   method = "avNNet",
                   tuneGrid = nnetGrid,
                   trControl = ctrl,
-                  # preProc = c("center", "scale"),
                   linout = TRUE,
                   trace = FALSE,
                   MaxNWts =  5 * (ncol(train_x_nnet) + 1) + 5 + 1,
                   maxit = 50)
 
 # review performance metrics
-nnetPred <- predict(nnetTune, newdata = test)
-nnet_results = postResample(nnetPred, test$PH)
-nnet_results
+nnetPred <- predict(nnetTune, test_x_nnet)
+nnet_results = postResample(nnetPred, test_x_nnet$PH)
+nnet_results_df = rownames_to_column(data.frame(nnet_results), var = "Metric")
+colnames(nnet_results_df) = c('Metric', 'Score')
+knit_table(nnet_results_df, 'Neural Network Performance')
 ```
 
 ## MARS
@@ -533,43 +502,31 @@ marsTuned <- train(PH ~ .,data = train,
   )
 
 # review performance metrics
-marsPred <- predict(marsTuned, netest)
+marsPred <- predict(marsTuned, test)
 mars_results = postResample(marsPred, test$PH)
-mars_results
+mars_results_df = rownames_to_column(data.frame(mars_results), var = "Metric")
+colnames(mars_results_df) = c('Metric', 'Score')
+knit_table(mars_results_df, 'MARS Performance')
 ```
-
-## SVM
-```{r}
-# svm <- train(train_x[-1], train_y,
-#   method = "svmRadial",
-#   preProc = c("center", "scale"),
-#   tuneLength = 14,
-#   trControl = trainControl(method = "cv"))
-# 
-# # review performance metrics
-# svmPred <- predict(svm, newdata = test_x)
-# svm_results = postResample(svmPred, test_y)
-# svm_results
-```
-
 
 ## Random Forest
 ```{r}
 set.seed(123)
-rfGrid <- expand.grid(mtry = c(2,4,6,8,10))
+rfGrid <- expand.grid(mtry = c(8, 10, 15, 20))
 
 # fit model
 rfModel <- train(PH ~ .,data = train,
+                 tuneGrid = rfGrid,
                  trControl = ctrl,
-                 # tuneGrid = rfGrid,
                  method = "rf")
 
 # review performance metrics
 rf_pred <- predict(rfModel, test)
 rf_results = postResample(pred = rf_pred, obs = test$PH)
-rf_results
+rf_results_df = rownames_to_column(data.frame(rf_results), var = "Metric")
+colnames(rf_results_df) = c('Metric', 'Score')
+knit_table(rf_results_df, 'Random Forest Performance')
 ```
-
 
 ## Boosted Tree
 ```{r}
@@ -589,7 +546,9 @@ gbm <- train(PH ~ .,data = train,
 # review performance metrics
 gbm_pred <- predict(gbm, test)
 gbm_results = postResample(gbm_pred, obs = test$PH)
-gbm_results
+gbm_results_df = rownames_to_column(data.frame(gbm_results), var = "Metric")
+colnames(gbm_results_df) = c('Metric', 'Score')
+knit_table(gbm_results_df, 'Boosted Tree Performance')
 ```
 
 ## Cubist
@@ -603,16 +562,17 @@ cubist_model <- train(PH ~ .,data = train,
   tuneGrid = expand.grid(committees = c(1, 5, 10), neighbors = c(0, 3, 5, 7))
 )
 
-# rownames(cubist_model$trainingData)
-
-
 # review performance metrics
 cubist_pred <- predict(cubist_model, test)
 cubist_results = postResample(cubist_pred, test$PH)
-cubist_results
+cubist_results_df = rownames_to_column(data.frame(cubist_results), var = "Metric")
+colnames(cubist_results_df) = c('Metric', 'Score')
+knit_table(cubist_results_df, 'Cubist Performance')
 ```
 
 # Model Evaluation
+
+## Model Comparison
 ```{r}
 # compile all model performance results
 final_results = rbind(
@@ -621,7 +581,7 @@ final_results = rbind(
   pls_results,
   nnet_results,
   rf_results,
-  gbm_results,
+  # gbm_results,
   cubist_results
 )
 # add model name column
@@ -631,7 +591,7 @@ final_results = data.frame(cbind(Model = c(
   'Partial Least Squares',
   'Neural Network',
   'Random Forest',
-  'Boosted Tree',
+  # 'Boosted Tree',
   'Cubist'
   ), final_results))
 rownames(final_results) <- NULL
@@ -642,7 +602,8 @@ knit_table(final_results, 'Model Performance Metrics')
 # visualize results
 final_results = final_results |>
   mutate(RMSE = as.numeric(RMSE)) |>
-  mutate(RMSE = round(as.numeric(RMSE), 2))
+  mutate(RMSE = round(as.numeric(RMSE), 3))
+
 ggplot(data = final_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
       geom_bar(stat = "identity", fill='#2d3c52') +
       coord_flip() +
@@ -654,24 +615,58 @@ ggplot(data = final_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
       theme_minimal()
 ```
 
-# Feature Importance
+# Final Model - Random Forest
+
+## Random Forest Predictor Count Performance
 ```{r}
-varImp(rfModel)
-# plot(varImp(cubist_model), top = 10,
-#      main = "Cubist Model Variable Importance - Top 10")
-# 
+ggplot(rfModel) |>
+  theme_minimal() +
+  labs(
+    title = "Random Forest # Predictors by RMSE",
+    y = 'RMSE',
+    x='# Randomly Selected Predictors'
+  )
+```
 
 
-# cubist_vi <- 
-# varImp(cubist_model$finalModel, scale = FALSE)
-# knit_table(rownames_to_column(cubist_vi, var = "Predictor") |> arrange(desc(Overall)), 'Cubist Variable Importance')
+## Feature Importance
+```{r}
+# estimate the importance of each predictor
+rf_importance = varImp(rfModel)[1]$importance
+rf_importance = rownames_to_column(rf_importance, var = "Predictor")
+rf_importance = rf_importance |>
+  mutate(Predictor = gsub('`', '', Predictor)) |>
+  arrange(desc(Overall))
+
+# visualize results
+rf_importance |>
+  ggplot(aes(x=reorder(Predictor, Overall), y=Overall)) +
+  geom_segment( aes(xend=Predictor, yend=0)) +
+  geom_point( size=2, color="#22a298") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Random Forest Feature Importance - Top 10",
+    y = 'Importance',
+    x=''
+  )
+
+# output results
+knit_table(rf_importance, 'Random Forest Predictor Estimated Importance')
 ```
 
 
 # Final Predictions
 ```{r}
-final_pred <- predict(cubist, test_processed)
-final_pred
+# apply model to final test set
+final_pred <- predict(rfModel, test_processed)
+
+# export results to xlsx
+final_xslx = final_pred |>
+  as.data.frame() 
+colnames(final_xslx) = c('PH_Predictions')
+
+write_xlsx(final_xslx, path = "Results/DATA624_Project2_Predictions.xlsx")
 ```
 
 

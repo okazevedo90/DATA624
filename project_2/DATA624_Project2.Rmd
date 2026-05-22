@@ -46,76 +46,65 @@ knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
     scroll_box(width = "100%", height = ifelse(((nrow(df)+1)*45)+50 > 450, "450px", paste0(((nrow(df)+1)*45)+50, "px")), box_css = "border: 1px solid #FFFFFF;")
 }
 
-model_perf_df = function(model, test_df) {
+model_perf_df = function(model, test_df, model_name) {
   pred <- predict(model, test_df)
   results = postResample(pred = pred, obs = test_df$PH)
   results_df = rownames_to_column(data.frame(results), var = "Metric")
   colnames(results_df) = c('Metric', 'Score')
-  return(results_df)
+  knit_table(results_df, paste0(model_name, ' Performance'))
+  return(results)
 }
+
+load_models = TRUE
 ```
 
-# Import Data
-```{r}
+## Import Data
+```{r import}
 # import data from github
-train_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentData.xlsx"
-test_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentEvaluation.xlsx"
+train_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/Data/StudentData.xlsx"
+test_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/Data/StudentEvaluation.xlsx"
 
 train_data = import(train_data_url)
 test_data = import(test_data_url)
 
-head(train_data)
-head(test_data)
+knit_table(head(train_data), 'View Head of train data')
+knit_table(head(test_data), 'View Head of test data')
 ```
 
-# EDA
+<hr style="border:2px solid #2d3c52">
 
-## Initial Data Exploration
-```{r}
-# =========================================================
-# INITIAL DATA EXPLORATION 
-# =========================================================
+## EDA
 
+### Initial Data Exploration
+```{r data-exploration}
 # View dataset structure
 str(train_data)
 
 # Summary statistics
-summary(train_data)
+# summary(train_data)
 
 # Dataset dimensions
-dim(train_data)
+knit_table(
+  tibble(
+    Dimmension = c('Rows', 'Columns'),
+    Count = dim(train_data))
+)
 
 # Detailed overview
 skim(train_data)
 ```
 
-## Check Missing Value
-```{r}
-# =========================================================
-# CHECK MISSING VALUES
-# =========================================================
-
+### Check Missing Values
+```{r missing-values}
 # Count missing values in each column
-missing_values <- colSums(is.na(train_data))
+missing_table <- rownames_to_column(data.frame(colSums(is.na(train_data))), 'Variable')
+colnames(missing_table) = c('Variable',  'Missing_Count')
 
-# Display missing value counts
-missing_values
-
-# Create missing value table
-missing_table <- data.frame(
-  Variable = names(missing_values),
-  Missing_Count = missing_values
-)
-
-missing_table
+knit_table(missing_table, 'Column Missing Value Count')
 ```
 
-## Histograms for Numeric Variables
-```{r}
-# =========================================================
-#  HISTOGRAMS FOR NUMERIC VARIABLES
-# =========================================================
-
+### Histograms for Numeric Variables
+```{r histograms, fig.show="hold", out.width="50%", warning=FALSE}
 # Select numeric columns only
 numeric_cols <- train_data %>%
   select(where(is.numeric))
@@ -126,7 +115,7 @@ for(col in names(numeric_cols)){
     ggplot(train_data, aes(x = .data[[col]])) +
       geom_histogram(
         bins = 30,
-        fill = "skyblue",
+        fill = "#00BFC4",
         color = "black"
       ) +
       labs(
@@ -134,37 +123,31 @@ for(col in names(numeric_cols)){
         x = col,
         y = "Frequency"
       ) +
-      theme_minimal()
+      theme_minimal() +
+      theme(text = element_text(size = 16))
   )
 }
 ```
 
-## Outlier Detection
-```{r}
-
-# =========================================================
-#  BOXPLOTS FOR OUTLIER DETECTION
-# =========================================================
-
+### Outlier Detection
+```{r outlier, fig.show="hold", out.width="50%", warning=FALSE, fig.height=2}
 for(col in names(numeric_cols)){
   print(
     ggplot(train_data, aes(y = .data[[col]])) +
-      geom_boxplot(fill = "tomato") +
+      geom_boxplot(fill = "#22a298", outlier.colour = "coral1") +
       labs(
         title = paste("Boxplot of", col),
         y = col
       ) +
-      theme_minimal()
+      coord_flip() +
+      theme_minimal() +
+      theme(text = element_text(size = 16))
   )
 }
 ```
 
-## Correlation Analysis
-```{r}
-# =========================================================
-#  CORRELATION ANALYSIS
-# =========================================================
-
+### Correlation Analysis
+```{r correlation-analysis, fig.height=12, fig.width=12}
 # Compute correlation matrix
 cor_matrix <- cor(
   numeric_cols,
@@ -174,18 +157,12 @@ cor_matrix <- cor(
 # Correlation heatmap
 corrplot(
   cor_matrix,
-  method = "color",
-  type = "upper",
-  tl.cex = 0.7
-)
+  type = 'lower', order = 'hclust', tl.col = 'black',
+         cl.ratio = 0.2, tl.srt = 45, col = COL2('RdYlBu', 10))
 ```
 
-## Scatterplots 
-```{r}
-# =========================================================
-#  SCATTERPLOTS VS PH
-# =========================================================
-
+### Scatterplots
+```{r scatterplots, fig.show="hold", out.width="50%", warning=FALSE}
 # Remove PH from predictor list
 predictor_cols <- setdiff(names(numeric_cols), "PH")
 
@@ -193,26 +170,25 @@ predictor_cols <- setdiff(names(numeric_cols), "PH")
 for(col in predictor_cols){
   print(
     ggplot(train_data, aes(x = .data[[col]], y = PH)) +
-      geom_point(alpha = 0.6, color = "blue") +
-      geom_smooth(method = "lm", se = FALSE, color = "red") +
+      geom_point(alpha = 0.6, color = "#00BFC4") +
+      geom_smooth(method = "lm", formula = 'y ~ x', se = FALSE, color = "coral1") +
       labs(
         title = paste(col, "vs PH"),
         x = col,
         y = "PH"
       ) +
-      theme_minimal()
+      theme_minimal() +
+      theme(text = element_text(size = 16))
   )
 }
 ```
 
-# Data Prep
+<hr style="border:2px solid #2d3c52">
 
-## Fearture Engineering
-```{r}
-# =========================================================
-#  FEATURE ENGINEERING
-# =========================================================
+## Data Prep
 
+### Fearture Engineering
+```{r feature-engineering}
 # Convert Brand Code to categorical variable
 if("Brand Code" %in% names(train_data)) {
 
@@ -248,12 +224,8 @@ test_data = dummy_cols(test_data, select_columns = "Brand Code", remove_selected
 ```
 
 
-## Seperate Target Variable
-```{r}
-# =========================================================
-# SEPARATE TARGET VARIABLE
-# =========================================================
-
+### Seperate Target Variable
+```{r seperate}
 # PH is the prediction target
 y <- train_data$PH
 
@@ -262,12 +234,9 @@ x <- train_data %>%
   select(-PH)
 ```
 
-## Remove Near-Zero Variance Variables
-```{r}
-# =========================================================
-#  REMOVE NEAR-ZERO VARIANCE VARIABLES
-# =========================================================
-
+### Remove Variables
+#### Remove Near-Zero Variance Variables
+```{r low variance}
 # Identify low-information predictors
 nzv <- nearZeroVar(x)
 
@@ -281,12 +250,8 @@ if(length(nzv) > 0){
 test_processed <- test_data[, names(x)]
 ```
 
-## Remove Highly Corrrelated Variables
-```{r}
-# =========================================================
-#  REMOVE HIGHLY CORRELATED VARIABLES
-# =========================================================
-
+#### Remove Highly Corrrelated Variables
+```{r high-corr}
 # Keep numeric variables only
 numeric_x <- x %>%
   select(where(is.numeric))
@@ -314,14 +279,8 @@ if(length(highCorr) > 0){
 }
 ```
 
-
-
-## Data Preprocessing
-```{r}
-# =========================================================
-#  PREPROCESSING
-# =========================================================
-
+### Data Preprocessing
+```{r preprocessing}
 # Apply:
 # 1. Median imputation
 # 2. Centering
@@ -349,29 +308,27 @@ test_processed <- predict(
 )
 ```
 
-## Final Data Checks
-```{r}
-# =========================================================
-#  FINAL DATASET CHECKS
-# =========================================================
-
+### Final Data Checks
+```{r final-check}
 # Check for remaining missing values
-colSums(is.na(x_processed))
+final_missing_table <- rownames_to_column(data.frame(colSums(is.na(x_processed))), 'Variable')
+colnames(final_missing_table) = c('Variable',  'Missing_Count')
+
+knit_table(final_missing_table, 'Column Missing Value Count')
 
 # Final dataset dimensions
-dim(x_processed)
+knit_table(
+  tibble(
+    Dimmension = c('Rows', 'Columns'),
+    Count = dim(x_processed))
+)
 
 # Preview processed dataset
-head(x_processed)
+knit_table(head(x_processed), 'Preview Processed Dataset')
 ```
 
-
-## Create and Export Final Modeling Dataset
-```{r}
-# =========================================================
-#  CREATE FINAL MODELING DATASET
-# =========================================================
-
+### Final Modeling Dataset
+```{r final-data}
 # Combine target variable with processed predictors
 final_train_data <- cbind(
   PH = y,
@@ -379,25 +336,21 @@ final_train_data <- cbind(
 )
 
 # Preview final dataset
-head(final_train_data)
+knit_table(head(final_train_data), 'Preview Final Dataset')
+
 ```
 
-
-```{r}
-# =========================================================
-#  EXPORT FINAL DATASETS
-# =========================================================
-
+```{r export-data}
 # Export processed training dataset
 write_xlsx(
   final_train_data,
-  "Processed_Training_Data.xlsx"
+  "Results/Processed_Training_Data.xlsx"
 )
 
 # Export processed test dataset
 write_xlsx(
   test_processed,
-  "Processed_Test_Data.xlsx"
+  "Results/Processed_Test_Data.xlsx"
 )
 ```
 
@@ -408,57 +361,72 @@ final_train_data <- final_train_data[!is.na(final_train_data$PH), ]
 ```
 
 
-## Split Data
-```{r}
+### Split Data
+```{r split}
 set.seed(123)
 
 # split data into train and test sets
 trainingRows <- createDataPartition(final_train_data$PH, p = .80, list= FALSE)
 
-# train 
-train <- final_train_data[trainingRows, ] 
+# train
+train <- final_train_data[trainingRows, ]
 
 # test
 test = final_train_data[-trainingRows, ]
 ```
 
-# Model Development {.tabset}
+<hr style="border:2px solid #2d3c52">
 
-## Linear Regression
-```{r}
+## Model Development {.tabset}
+
+### Linear Regression
+```{r linear-regression}
 set.seed(123)
 
 # 10-fold cross-validation
 ctrl <- trainControl(method = "cv", number = 5)
 
-# fit model
-lmModel <- train(PH ~ .,
-    data = train,
-    method = "lm", trControl = ctrl) 
+if (load_models == TRUE) {
+  # load model
+  lmModel <- readRDS("Models/lmModel.rds")
+} else {
+  # fit model
+  lmModel <- train(PH ~ .,
+      data = train,
+      method = "lm", trControl = ctrl)
+  # save model
+  saveRDS(lmModel, "Models/lmModel.rds")
+}
 
 # review performance metrics
-lm_results = model_perf_df(lmModel, test)
-knit_table(lm_results, 'Linear Regression Performance')
+lm_results = model_perf_df(lmModel, test, 'Linear Regression')
+lm_results
 ```
 
-## Partial Least Squares
-```{r}
+### Partial Least Squares
+```{r pls}
 set.seed(123)
 
-# fit model
-plsModel <- train(PH ~ .,data = train,
-                 method = "pls", 
-                 tuneLength = 20,
-                 trControl = ctrl,
-                 # preProc = c("center", "scale"),
-                 validation = "CV")
+if (load_models == TRUE) {
+  # load model
+  plsModel <- readRDS("Models/plsModel.rds")
+} else {
+  # fit model
+  plsModel <- train(PH ~ .,data = train,
+                   method = "pls",
+                   tuneLength = 20,
+                   trControl = ctrl,
+                   validation = "CV")
+    # save model
+  saveRDS(plsModel, "Models/plsModel.rds")
+}
 
 # review performance metrics
-pls_results = model_perf_df(lmModel, test)
-knit_table(pls_results, 'Partial Least Squares Performance')
+pls_results = model_perf_df(plsModel, test, 'Partial Least Squares')
+pls_results
 ```
 
-## Neural Network
+### Neural Network
 ```{r, warning=FALSE}
 # remove predictors to ensure maximum abs pairwise corr between predictors < 0.75
 tooHigh <-findCorrelation(cor(train[, -1]), cutoff = .75)
@@ -470,96 +438,132 @@ nnetGrid <- expand.grid(
   .decay = c(0, 0.01, .1),.size = c(1:5),
   .bag = FALSE)
 
-# fit model
-nnetTune <- train(PH ~ .,data = train_x_nnet,
-                  method = "avNNet",
-                  tuneGrid = nnetGrid,
-                  trControl = ctrl,
-                  linout = TRUE,
-                  trace = FALSE,
-                  MaxNWts =  5 * (ncol(train_x_nnet) + 1) + 5 + 1,
-                  maxit = 50)
+if (load_models == TRUE) {
+  # load model
+  nnetTune <- readRDS("Models/nnetTune.rds")
+} else {
+  # fit model
+  nnetTune <- train(PH ~ .,data = train_x_nnet,
+                    method = "avNNet",
+                    tuneGrid = nnetGrid,
+                    trControl = ctrl,
+                    linout = TRUE,
+                    trace = FALSE,
+                    MaxNWts =  5 * (ncol(train_x_nnet) + 1) + 5 + 1,
+                    maxit = 50)
+  # save model
+  saveRDS(nnetTune, "Models/nnetTune.rds")
+}
 
 # review performance metrics
-nnet_results = model_perf_df(lmModel, test)
-knit_table(nnet_results, 'Neural Network Performance')
+nnet_results = model_perf_df(nnetTune, test, 'Neural Network')
+nnet_results
 ```
 
-## MARS
-```{r}
+### MARS
+```{r mars}
 marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
 # Fix the seed so that the results can be reproduced
 set.seed(123)
 
-# fit model
-marsTuned <- train(PH ~ .,data = train,
-  method = "earth",
-  # Explicitly declare the candidate models to test
-  tuneGrid = marsGrid,
-  trControl = ctrl
-  )
+if (load_models == TRUE) {
+  # load model
+  marsTuned <- readRDS("Models/marsTuned.rds")
+} else {
+  # fit model
+  marsTuned <- train(PH ~ .,data = train,
+    method = "earth",
+    # Explicitly declare the candidate models to test
+    tuneGrid = marsGrid,
+    trControl = ctrl
+    )
+  # save model
+  saveRDS(marsTuned, "Models/marsTuned.rds")
+}
 
 # review performance metrics
-mars_results = model_perf_df(marsTuned, test)
-knit_table(mars_results, 'MARS Performance')
+mars_results = model_perf_df(marsTuned, test, 'MARS')
+mars_results
 ```
 
-## Random Forest
-```{r}
+### Random Forest
+```{r random-forest}
 set.seed(123)
 rfGrid <- expand.grid(mtry = c(8, 10, 15, 20))
 
-# fit model
-rfModel <- train(PH ~ .,data = train,
-                 tuneGrid = rfGrid,
-                 trControl = ctrl,
-                 method = "rf")
+if (load_models == TRUE) {
+  # load model
+  rfModel <- readRDS("Models/rfModel.rds")
+} else {
+  # fit model
+  rfModel <- train(PH ~ .,data = train,
+                   tuneGrid = rfGrid,
+                   trControl = ctrl,
+                   method = "rf")
+  # save model
+  saveRDS(rfModel, "Models/rfModel.rds")
+}
 
 # review performance metrics
-rf_results = model_perf_df(rfModel, test)
-knit_table(rf_results, 'Random Forest Performance')
+rf_results = model_perf_df(rfModel, test, 'Random Forest')
+rf_results
 ```
 
-## Boosted Tree
-```{r}
-gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
-                       n.trees = seq(100, 1000, by = 50),
-                       shrinkage = c(0.01, 0.1),
-                       n.minobsinnode = 10)
+### Boosted Tree
+```{r boosted-tree}
+# gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+#                        n.trees = seq(100, 1000, by = 50),
+#                        shrinkage = c(0.01, 0.1),
+#                        n.minobsinnode = 10)
+# set.seed(123)
+#
+# if (load_models == TRUE) {
+#   # load model
+#   gbm <- readRDS("Models/gbm.rds")
+# } else {
+#   # fit model
+#   gbm <- train(PH ~ .,data = train,
+#                  method = "gbm",
+#                  tuneGrid = gbmGrid,
+#                  verbose = FALSE)
+#   # save model
+#   saveRDS(gbm, "Models/gbm.rds")
+# }
+#
+# # review performance metrics
+# gbm_results = model_perf_df(gbm, test, 'Boosted Tree')
+```
 
+### Cubist
+```{r cubist}
 set.seed(123)
 
-# fit model
-gbm <- train(PH ~ .,data = train,
-                 method = "gbm",
-                 tuneGrid = gbmGrid,
-                 verbose = FALSE)
+
+if (load_models == TRUE) {
+  # load model
+  cubist_model <- readRDS("Models/cubist_model.rds")
+} else {
+  # fit model
+  cubist_model <- train(PH ~ .,data = train,
+    method = "cubist",
+    trControl = ctrl,
+    tuneGrid = expand.grid(committees = c(1, 5, 10), neighbors = c(0, 3, 5, 7))
+  )
+  # save model
+  saveRDS(cubist_model, "Models/cubist_model.rds")
+}
 
 # review performance metrics
-gbm_results = model_perf_df(gbm, test)
-knit_table(gbm_results, 'Boosted Tree Performance')
+cubist_results = model_perf_df(cubist_model, test, 'Cubist')
+cubist_results
 ```
 
-## Cubist
-```{r}
-set.seed(123)
+<hr style="border:2px solid #2d3c52">
 
-# fit model
-cubist_model <- train(PH ~ .,data = train,
-  method = "cubist",
-  trControl = ctrl,
-  tuneGrid = expand.grid(committees = c(1, 5, 10), neighbors = c(0, 3, 5, 7))
-)
+## Model Evaluation
 
-# review performance metrics
-cubist_results = model_perf_df(cubist_model, test)
-knit_table(cubist_results_df, 'Cubist Performance')
-```
-
-# Model Evaluation
-
-## Model Comparison
-```{r}
+### Model Comparison
+```{r model-comparison}
 # compile all model performance results
 final_results = rbind(
   lm_results,
@@ -570,6 +574,7 @@ final_results = rbind(
   # gbm_results,
   cubist_results
 )
+
 # add model name column
 final_results = data.frame(cbind(Model = c(
   'Linear Regression',
@@ -591,22 +596,26 @@ final_results = final_results |>
   mutate(RMSE = round(as.numeric(RMSE), 3))
 
 ggplot(data = final_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
-      geom_bar(stat = "identity", fill='#2d3c52') +
-      coord_flip() +
-      labs(
-        title = "Model Comparison: RMSE",
-        x = "Model",
-        y = "RMSE"
-      ) +
-      theme_minimal()
+  geom_bar(stat = "identity", fill='darkolivegreen3') +
+  coord_flip() +
+  labs(
+    title = "Model Comparison: RMSE",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  theme_minimal() +
+  theme(text = element_text(size = 15))
 ```
 
-# Final Model - Random Forest
+<hr style="border:2px solid #2d3c52">
 
-## Random Forest Predictor Count Performance
-```{r}
+## Final Model - Random Forest
+
+### Predictor Count Performance
+```{r pred-count, warning=FALSE}
 ggplot(rfModel) +
   theme_minimal() +
+  geom_point(size=2, color="#22a298") +
   labs(
     title = "Random Forest # Predictors by RMSE",
     y = 'RMSE',
@@ -614,9 +623,8 @@ ggplot(rfModel) +
   )
 ```
 
-
-## Feature Importance
-```{r}
+### Feature Importance
+```{r feature-imp}
 # estimate the importance of each predictor
 rf_importance = varImp(rfModel)[1]$importance
 rf_importance = rownames_to_column(rf_importance, var = "Predictor")
@@ -628,7 +636,7 @@ rf_importance = rf_importance |>
 rf_importance |>
   ggplot(aes(x=reorder(Predictor, Overall), y=Overall)) +
   geom_segment( aes(xend=Predictor, yend=0)) +
-  geom_point( size=2, color="#22a298") +
+  geom_point(size=2, color="#22a298") +
   coord_flip() +
   theme_minimal() +
   labs(
@@ -641,18 +649,19 @@ rf_importance |>
 knit_table(rf_importance, 'Random Forest Predictor Estimated Importance')
 ```
 
+<hr style="border:2px solid #2d3c52">
 
-# Final Predictions
-```{r}
+## Final Predictions
+```{r final-preds}
 # apply model to final test set
 final_pred <- predict(rfModel, test_processed)
 
 # export results to xlsx
 final_xslx = final_pred |>
-  as.data.frame() 
+  as.data.frame()
 colnames(final_xslx) = c('PH_Predictions')
 
 write_xlsx(final_xslx, path = "Results/DATA624_Project2_Predictions.xlsx")
+
+knit_table(final_xslx, 'Final Predictions')
 ```
-
-

@@ -514,7 +514,7 @@ nnetTune <- train(PH ~ .,data = train,
 
 # review performance metrics
 nnetPred <- predict(nnetTune, newdata = test)
-nnet_results = postResample(nnetPred, test$PHs)
+nnet_results = postResample(nnetPred, test$PH)
 nnet_results
 ```
 

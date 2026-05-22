@@ -29,7 +29,6 @@ library(corrplot)
 library(nnet)
 library(randomForest)
 library(fastDummies)
-library(modEvA)
 
 knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
   kbl(df, format = "html", escape = FALSE, caption = caption) |>
@@ -45,6 +44,14 @@ knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
     column_spec(1, extra_css = paste("border-left: 2px solid", color, ";")) |>
     column_spec(dim(df)[2], extra_css = paste("border-right: 2px solid", color, ";")) |>
     scroll_box(width = "100%", height = ifelse(((nrow(df)+1)*45)+50 > 450, "450px", paste0(((nrow(df)+1)*45)+50, "px")), box_css = "border: 1px solid #FFFFFF;")
+}
+
+model_perf_df = function(model, test_df) {
+  pred <- predict(model, test_df)
+  results = postResample(pred = pred, obs = test_df$PH)
+  results_df = rownames_to_column(data.frame(results), var = "Metric")
+  colnames(results_df) = c('Metric', 'Score')
+  return(results_df)
 }
 ```
 
@@ -430,11 +437,8 @@ lmModel <- train(PH ~ .,
     method = "lm", trControl = ctrl) 
 
 # review performance metrics
-lm_pred <- predict(lmModel,  test)
-lm_results = postResample(pred = lm_pred, obs = test$PH)
-lm_results_df = rownames_to_column(data.frame(lm_results), var = "Metric")
-colnames(lm_results_df) = c('Metric', 'Score')
-knit_table(lm_results_df, 'Linear Regression Performance')
+lm_results = model_perf_df(lmModel, test)
+knit_table(lm_results, 'Linear Regression Performance')
 ```
 
 ## Partial Least Squares
@@ -450,11 +454,8 @@ plsModel <- train(PH ~ .,data = train,
                  validation = "CV")
 
 # review performance metrics
-pls_pred <- predict(plsModel, test)
-pls_results = postResample(pls_pred, test$PH)
-pls_results_df = rownames_to_column(data.frame(pls_results), var = "Metric")
-colnames(pls_results_df) = c('Metric', 'Score')
-knit_table(pls_results_df, 'Partial Least Squares Performance')
+pls_results = model_perf_df(lmModel, test)
+knit_table(pls_results, 'Partial Least Squares Performance')
 ```
 
 ## Neural Network
@@ -480,11 +481,8 @@ nnetTune <- train(PH ~ .,data = train_x_nnet,
                   maxit = 50)
 
 # review performance metrics
-nnetPred <- predict(nnetTune, test_x_nnet)
-nnet_results = postResample(nnetPred, test_x_nnet$PH)
-nnet_results_df = rownames_to_column(data.frame(nnet_results), var = "Metric")
-colnames(nnet_results_df) = c('Metric', 'Score')
-knit_table(nnet_results_df, 'Neural Network Performance')
+nnet_results = model_perf_df(lmModel, test)
+knit_table(nnet_results, 'Neural Network Performance')
 ```
 
 ## MARS
@@ -502,11 +500,8 @@ marsTuned <- train(PH ~ .,data = train,
   )
 
 # review performance metrics
-marsPred <- predict(marsTuned, test)
-mars_results = postResample(marsPred, test$PH)
-mars_results_df = rownames_to_column(data.frame(mars_results), var = "Metric")
-colnames(mars_results_df) = c('Metric', 'Score')
-knit_table(mars_results_df, 'MARS Performance')
+mars_results = model_perf_df(marsTuned, test)
+knit_table(mars_results, 'MARS Performance')
 ```
 
 ## Random Forest
@@ -521,11 +516,8 @@ rfModel <- train(PH ~ .,data = train,
                  method = "rf")
 
 # review performance metrics
-rf_pred <- predict(rfModel, test)
-rf_results = postResample(pred = rf_pred, obs = test$PH)
-rf_results_df = rownames_to_column(data.frame(rf_results), var = "Metric")
-colnames(rf_results_df) = c('Metric', 'Score')
-knit_table(rf_results_df, 'Random Forest Performance')
+rf_results = model_perf_df(rfModel, test)
+knit_table(rf_results, 'Random Forest Performance')
 ```
 
 ## Boosted Tree
@@ -544,11 +536,8 @@ gbm <- train(PH ~ .,data = train,
                  verbose = FALSE)
 
 # review performance metrics
-gbm_pred <- predict(gbm, test)
-gbm_results = postResample(gbm_pred, obs = test$PH)
-gbm_results_df = rownames_to_column(data.frame(gbm_results), var = "Metric")
-colnames(gbm_results_df) = c('Metric', 'Score')
-knit_table(gbm_results_df, 'Boosted Tree Performance')
+gbm_results = model_perf_df(gbm, test)
+knit_table(gbm_results, 'Boosted Tree Performance')
 ```
 
 ## Cubist
@@ -563,10 +552,7 @@ cubist_model <- train(PH ~ .,data = train,
 )
 
 # review performance metrics
-cubist_pred <- predict(cubist_model, test)
-cubist_results = postResample(cubist_pred, test$PH)
-cubist_results_df = rownames_to_column(data.frame(cubist_results), var = "Metric")
-colnames(cubist_results_df) = c('Metric', 'Score')
+cubist_results = model_perf_df(cubist_model, test)
 knit_table(cubist_results_df, 'Cubist Performance')
 ```
 
@@ -619,7 +605,7 @@ ggplot(data = final_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
 
 ## Random Forest Predictor Count Performance
 ```{r}
-ggplot(rfModel) |>
+ggplot(rfModel) +
   theme_minimal() +
   labs(
     title = "Random Forest # Predictors by RMSE",

@@ -1,0 +1,855 @@
+---
+title: "DATA624 Project 2"
+author: "Olivia Azevedo, Ahmed Hassan, Ariba Razzaq, Tatyana Titova"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: "hide"
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: true
+---
+
+## Overview
+
+This report documents the full modeling pipeline developed to predict the pH of beverage products manufactured at ABC Beverage. pH is a critical quality control metric — it directly influences product taste, microbial stability, and regulatory compliance. New regulations require that ABC Beverage not only monitor pH, but document the manufacturing factors that drive it and demonstrate a systematic, data-driven approach to its prediction.
+
+The analysis proceeds in four stages: (1) exploratory data analysis to understand the structure, quality, and relationships within the historical production data; (2) data preprocessing to prepare the feature set for modeling; (3) comparative evaluation of six candidate predictive models; and (4) selection and interpretation of the final model, followed by generation of pH predictions for the evaluation dataset.
+
+All models were trained and evaluated using the `caret` framework in R, with 5-fold cross-validation applied consistently across all approaches to ensure fair comparison.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(fpp3)
+library(kableExtra)
+library(ggplot2)
+library(rio)
+library(skimr)
+library(zoo)
+library(writexl)
+library(readxl)
+library(caret)
+library(dplyr)
+library(corrplot)
+library(nnet)
+library(randomForest)
+library(fastDummies)
+
+knit_table <- function(df, caption='', position = 'left', color = '#2d3c52') {
+  kbl(df, format = "html", escape = FALSE, caption = caption) |>
+    kable_styling(
+      full_width = F,
+      position = position,
+      bootstrap_options = c("striped")) |>
+    row_spec(0, bold = T,
+             color = "white",
+             background = color,
+             extra_css = paste("border: 2px solid", color, ";")) |>
+    row_spec(dim(df)[1], extra_css = paste("border-bottom: 2px solid", color, ";")) |>
+    column_spec(1, extra_css = paste("border-left: 2px solid", color, ";")) |>
+    column_spec(dim(df)[2], extra_css = paste("border-right: 2px solid", color, ";")) |>
+    scroll_box(width = "100%", height = ifelse(((nrow(df)+1)*45)+50 > 450, "450px", paste0(((nrow(df)+1)*45)+50, "px")), box_css = "border: 1px solid #FFFFFF;")
+}
+
+model_perf_df = function(model, test_df, model_name) {
+  pred <- predict(model, test_df)
+  results = postResample(pred = pred, obs = test_df$PH)
+  results_df = rownames_to_column(data.frame(results), var = "Metric")
+  colnames(results_df) = c('Metric', 'Score')
+  knit_table(results_df, paste0(model_name, ' Performance'))
+  return(results)
+}
+
+load_models = TRUE
+```
+
+---
+
+## Import Data
+
+The training dataset (`StudentData.xlsx`) and evaluation dataset (`StudentEvaluation.xlsx`) are imported directly from GitHub. The training set contains labeled records with known pH values and will be used for model development. The evaluation set contains unlabeled records for which pH predictions will be generated using the final selected model.
+
+```{r import}
+# import data from github
+train_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentData.xlsx"
+test_data_url = "https://github.com/okazevedo90/DATA624/raw/refs/heads/main/project_2/StudentEvaluation.xlsx"
+
+train_data = import(train_data_url)
+test_data = import(test_data_url)
+
+knit_table(head(train_data), 'View Head of train data')
+knit_table(head(test_data), 'View Head of test data')
+```
+
+<hr style="border:2px solid #2d3c52">
+
+## EDA
+
+Exploratory data analysis (EDA) is performed to characterize the structure of the dataset, assess data quality, identify distributional patterns, detect outliers, and understand relationships between predictors and the target variable (PH). These findings directly inform preprocessing decisions and model selection.
+
+### Initial Data Exploration
+
+We begin by examining the data types, dimensions, and summary statistics for each variable. The `skim()` function provides a compact overview including completeness rates, mean, standard deviation, and distribution shape for each column. This step helps identify which variables are numeric versus categorical, flags any immediate data quality concerns, and provides context for how much variation exists in PH and each potential predictor.
+
+```{r data-exploration}
+# View dataset structure
+str(train_data)
+
+# Summary statistics
+# summary(train_data)
+
+# Dataset dimensions
+knit_table(
+  tibble(
+    Dimmension = c('Rows', 'Columns'),
+    Count = dim(train_data))
+)
+
+# Detailed overview
+skim(train_data)
+```
+
+The training dataset contains 2,571 observations across 33 columns — 32 process variables and 1 target variable (PH). One column, `Brand Code`, is categorical; all others are numeric. The `skim()` output reveals the presence of missing values across several variables, which will be addressed during preprocessing.
+
+### Check Missing Values
+
+Missing data must be explicitly quantified before modeling. Some algorithms cannot handle `NA` values natively and will either error or silently drop rows, both of which can introduce bias or reduce effective sample size. Understanding the missingness pattern also informs the choice of imputation strategy.
+
+```{r missing-values}
+# Count missing values in each column
+missing_table <- rownames_to_column(data.frame(colSums(is.na(train_data))), 'Variable')
+colnames(missing_table) = c('Variable',  'Missing_Count')
+
+knit_table(missing_table, 'Column Missing Value Count')
+```
+
+Most variables have a small proportion of missing values (typically under 5%), consistent with random sensor dropouts or logging gaps rather than systematic data collection failures. The target variable PH itself has a small number of missing values; those records will be excluded from training since supervised learning requires a known outcome. Predictor missingness will be handled via median imputation in the preprocessing step.
+
+### Histograms for Numeric Variables
+
+Histograms reveal the distributional shape of each numeric predictor — whether variables are approximately normal, skewed, bimodal, or contain discrete spikes. Severe skewness or multimodality can degrade the performance of linear models and distance-based algorithms, and may suggest the need for transformation. Centering and scaling (applied later) partially address scale differences, but shape characteristics remain relevant for model selection.
+
+```{r histograms, fig.show="hold", out.width="50%", warning=FALSE}
+# Select numeric columns only
+numeric_cols <- train_data %>%
+  select(where(is.numeric))
+
+# Create histograms for all numeric variables
+for(col in names(numeric_cols)){
+  print(
+    ggplot(train_data, aes(x = .data[[col]])) +
+      geom_histogram(
+        bins = 30,
+        fill = "#00BFC4",
+        color = "black"
+      ) +
+      labs(
+        title = paste("Histogram of", col),
+        x = col,
+        y = "Frequency"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 16))
+  )
+}
+```
+
+Several variables exhibit right-skewed distributions or contain isolated spikes at zero, suggesting the presence of process shutdowns or idle periods recorded as zeros rather than true missing values. The target variable PH appears approximately normally distributed, which is favorable for regression-based modeling. Variables with heavily non-normal distributions further motivate the use of tree-based methods, which are insensitive to predictor scale and shape.
+
+### Outlier Detection
+
+Boxplots are used to visualize the spread and identify extreme values in each numeric variable. Outliers — defined here as observations beyond 1.5 times the interquartile range from the quartile boundaries — are flagged in coral. Extreme outliers can distort parameter estimates in linear models, though tree-based methods are generally robust to them.
+
+```{r outlier, fig.show="hold", out.width="50%", warning=FALSE, fig.height=2}
+for(col in names(numeric_cols)){
+  print(
+    ggplot(train_data, aes(y = .data[[col]])) +
+      geom_boxplot(fill = "#22a298", outlier.colour = "coral1") +
+      labs(
+        title = paste("Boxplot of", col),
+        y = col
+      ) +
+      coord_flip() +
+      theme_minimal() +
+      theme(text = element_text(size = 16))
+  )
+}
+```
+
+Several manufacturing variables show notable outliers, particularly flow- and pressure-related measurements. These likely reflect legitimate process events (e.g., pressure spikes, flow interruptions) rather than data entry errors, so values are retained rather than removed. Their presence reinforces the suitability of ensemble tree methods, which partition the feature space and are not distorted by extreme values the way ordinary least squares regression is.
+
+### Correlation Analysis
+
+Understanding pairwise correlations among predictors serves two purposes: (1) identifying redundant variables that may cause multicollinearity in linear models, and (2) identifying predictors that are directly correlated with PH, which provides early signal about which features may be most informative. The correlation matrix is computed using pairwise complete observations to handle missing values without listwise deletion.
+
+```{r correlation-analysis, fig.height=12, fig.width=12}
+# Compute correlation matrix
+cor_matrix <- cor(
+  numeric_cols,
+  use = "pairwise.complete.obs"
+)
+
+# Correlation heatmap
+corrplot(
+  cor_matrix,
+  type = 'lower', order = 'hclust', tl.col = 'black',
+         cl.ratio = 0.2, tl.srt = 45, col = COL2('RdYlBu', 10))
+```
+
+The hierarchically clustered correlation heatmap reveals several clusters of highly correlated predictors, particularly among carbonation- and pressure-related variables. Correlations exceeding |0.90| between predictors indicate multicollinearity that would inflate standard errors in linear regression and reduce model interpretability. These pairs are removed during preprocessing using `findCorrelation()`. Additionally, several predictors show moderate correlations with PH (the bottom row/rightmost column), providing initial evidence that a predictive signal exists in this feature set.
+
+### Scatterplots
+
+Individual scatterplots of each predictor against PH, overlaid with a linear regression trend line, provide a visual assessment of the linearity and strength of each predictor-response relationship. Non-linear or heteroscedastic patterns motivate the inclusion of flexible, non-parametric models (e.g., MARS, Random Forest) in the candidate set.
+
+```{r scatterplots, fig.show="hold", out.width="50%", warning=FALSE}
+# Remove PH from predictor list
+predictor_cols <- setdiff(names(numeric_cols), "PH")
+
+# Scatterplots against PH
+for(col in predictor_cols){
+  print(
+    ggplot(train_data, aes(x = .data[[col]], y = PH)) +
+      geom_point(alpha = 0.6, color = "#00BFC4") +
+      geom_smooth(method = "lm", formula = 'y ~ x', se = FALSE, color = "coral1") +
+      labs(
+        title = paste(col, "vs PH"),
+        x = col,
+        y = "PH"
+      ) +
+      theme_minimal() +
+      theme(text = element_text(size = 16))
+  )
+}
+```
+
+The scatterplots reveal a mix of relationships: some predictors (e.g., `Mnf.Flow`) show a discernible trend with PH, while others appear diffuse or non-linear. The non-linear, heteroscedastic patterns visible in several plots indicate that linear methods alone will be insufficient to fully capture the predictor-response relationships — this is consistent with a complex, multi-stage manufacturing process where pH is driven by interactions among multiple variables simultaneously rather than any single linear effect.
+
+<hr style="border:2px solid #2d3c52">
+
+## Data Prep
+
+Data preprocessing transforms the raw dataset into a form suitable for model training. The steps below address categorical encoding, target separation, dimensionality reduction via variance and correlation filtering, and numerical standardization. Critically, all preprocessing transformations are learned on the training data only and then applied identically to the test/evaluation data to prevent data leakage.
+
+### Feature Engineering
+
+`Brand Code` is the only categorical variable in the dataset. It identifies the product formulation (brands A, B, C, D), and different brands are likely manufactured under distinct process conditions that influence pH. Most regression and ensemble algorithms require numeric inputs, so `Brand Code` is converted to a set of binary dummy variables using one-hot encoding via `dummy_cols()`. Missing `Brand Code` values are assigned an "Unknown" category before encoding rather than dropped, preserving those observations for modeling.
+
+The same encoding scheme — including the same factor levels — is applied to the evaluation dataset to ensure the test feature matrix is structurally identical to the training feature matrix.
+
+```{r feature-engineering}
+# Convert Brand Code to categorical variable
+if("Brand Code" %in% names(train_data)) {
+
+  train_data$`Brand Code` <- as.character(
+    train_data$`Brand Code`
+  )
+
+  train_data$`Brand Code`[
+    is.na(train_data$`Brand Code`)
+  ] <- "Unknown"
+
+  train_data$`Brand Code` <- as.factor(
+    train_data$`Brand Code`
+  )
+
+  test_data$`Brand Code` <- as.character(
+    test_data$`Brand Code`
+  )
+
+  test_data$`Brand Code`[
+    is.na(test_data$`Brand Code`)
+  ] <- "Unknown"
+
+  test_data$`Brand Code` <- factor(
+    test_data$`Brand Code`,
+    levels = levels(train_data$`Brand Code`)
+  )
+}
+
+# Transform Brand Code into Dummy Variables
+train_data = dummy_cols(train_data, select_columns = "Brand Code", remove_selected_columns = TRUE)
+test_data = dummy_cols(test_data, select_columns = "Brand Code", remove_selected_columns = TRUE)
+```
+
+### Separate Target Variable
+
+The response variable (PH) is isolated from the predictor matrix before any further preprocessing. This is standard practice: preprocessing transformations (centering, scaling, imputation) apply only to predictors, not to the target variable.
+
+```{r seperate}
+# PH is the prediction target
+y <- train_data$PH
+
+# Remove PH from predictors
+x <- train_data %>%
+  select(-PH)
+```
+
+### Remove Variables
+
+#### Remove Near-Zero Variance Variables
+
+Variables with near-zero variance carry minimal predictive information — if a variable takes the same value (or nearly the same value) for almost every observation, it cannot differentiate between high-pH and low-pH batches. Including such variables wastes model capacity and can destabilize coefficient estimates. `nearZeroVar()` from the `caret` package identifies predictors where the ratio of the most common value's frequency to the second most common value's frequency exceeds a threshold, or where the percentage of unique values is very low.
+
+```{r low variance}
+# Identify low-information predictors
+nzv <- nearZeroVar(x)
+
+# Remove them if any exist
+if(length(nzv) > 0){
+
+  x <- x[, -nzv]
+}
+
+# Match columns in test dataset
+test_processed <- test_data[, names(x)]
+```
+
+#### Remove Highly Correlated Variables
+
+Highly correlated predictor pairs are redundant: they encode essentially the same information about the response. Including both inflates the effective dimensionality of the feature space and, for linear models specifically, causes multicollinearity that inflates variance in coefficient estimates and degrades interpretability. `findCorrelation()` uses the correlation matrix to identify variables that should be removed to ensure all remaining pairwise correlations fall below the specified threshold (|r| < 0.90). When a pair exceeds the threshold, the variable with the larger mean absolute correlation with all other predictors is removed — removing the most redundant variable first.
+
+```{r high-corr}
+# Keep numeric variables only
+numeric_x <- x %>%
+  select(where(is.numeric))
+
+# Correlation matrix
+cor_matrix <- cor(
+  numeric_x,
+  use = "pairwise.complete.obs"
+)
+
+# Identify highly correlated variables
+highCorr <- findCorrelation(
+  cor_matrix,
+  cutoff = 0.90
+)
+
+# Remove correlated predictors
+if(length(highCorr) > 0){
+
+  highCorr_names <- colnames(numeric_x)[highCorr]
+
+  x <- x[, !(names(x) %in% highCorr_names)]
+
+  test_processed <- test_processed[, names(x)]
+}
+```
+
+### Data Preprocessing
+
+Three preprocessing transformations are applied via `caret`'s `preProcess()` function:
+
+1. **Median Imputation**: Missing values in each predictor are replaced with that predictor's median value computed from the training set. Median imputation is preferred over mean imputation when outliers are present (as observed in the EDA), since the median is a more robust central tendency measure. Importantly, the median values are computed on the training data only and then applied to both training and test sets — this prevents data leakage from the evaluation set into the preprocessing step.
+
+2. **Centering**: Each predictor is shifted by subtracting its training-set mean, resulting in zero-mean predictors. Centering ensures that the model intercept represents the predicted PH when all predictors are at their average values, and is particularly important for algorithms that use gradient descent or penalized regression.
+
+3. **Scaling**: Each predictor is divided by its training-set standard deviation, normalizing all variables to unit variance. Scaling ensures that predictors measured in large units (e.g., pressure in PSI) do not numerically dominate predictors measured in small units (e.g., temperature in degrees), which would otherwise bias distance-based methods and penalized regression.
+
+Together, centering and scaling standardize the feature space, facilitating fair comparison of coefficient magnitudes and improving numerical stability across all model types.
+
+```{r preprocessing}
+# Apply:
+# 1. Median imputation
+# 2. Centering
+# 3. Scaling
+
+preprocess_model <- preProcess(
+  x,
+  method = c(
+    "medianImpute",
+    "center",
+    "scale"
+  )
+)
+
+# Apply preprocessing to training data
+x_processed <- predict(
+  preprocess_model,
+  x
+)
+
+# Apply SAME preprocessing to test data
+test_processed <- predict(
+  preprocess_model,
+  test_processed
+)
+```
+
+### Final Data Checks
+
+Before proceeding to modeling, we verify that the preprocessing pipeline successfully eliminated all missing values and confirm the final feature matrix dimensions. Any remaining missingness at this stage would indicate variables with 100% missingness that median imputation cannot resolve — such variables would need to be dropped entirely.
+
+```{r final-check}
+# Check for remaining missing values
+final_missing_table <- rownames_to_column(data.frame(colSums(is.na(x_processed))), 'Variable')
+colnames(final_missing_table) = c('Variable',  'Missing_Count')
+
+knit_table(final_missing_table, 'Column Missing Value Count')
+
+# Final dataset dimensions
+knit_table(
+  tibble(
+    Dimmension = c('Rows', 'Columns'),
+    Count = dim(x_processed))
+)
+
+# Preview processed dataset
+knit_table(head(x_processed), 'Preview Processed Dataset')
+```
+
+The post-preprocessing missing value table confirms that all missing values have been successfully imputed. The final predictor matrix dimensions reflect the variables that survived near-zero variance and high-correlation filtering.
+
+### Final Modeling Dataset
+
+The processed predictor matrix and target vector are recombined into a single data frame for model training. Records where PH itself is missing are removed, as supervised regression requires a known response value for every training observation.
+
+```{r final-data}
+# Combine target variable with processed predictors
+final_train_data <- cbind(
+  PH = y,
+  x_processed
+)
+
+# Preview final dataset
+knit_table(head(final_train_data), 'Preview Final Dataset')
+
+```
+
+```{r export-data}
+# Export processed training dataset
+write_xlsx(
+  final_train_data,
+  "Results/Processed_Training_Data.xlsx"
+)
+
+# Export processed test dataset
+write_xlsx(
+  test_processed,
+  "Results/Processed_Test_Data.xlsx"
+)
+```
+
+Records with missing PH values in the training set are dropped. Because PH is the response variable, these rows cannot contribute to parameter estimation and must be excluded.
+
+```{r handle-missing-target}
+### Handle Missing Target Values
+
+# Check how many missing PH values exist
+sum(is.na(final_train_data$PH))
+
+# Since PH is the target variable, rows with missing PH
+# cannot be used for supervised learning models.
+# Remove observations where PH is missing.
+
+final_train_data <- final_train_data %>%
+  filter(!is.na(PH))
+
+# Verify removal
+sum(is.na(final_train_data$PH))
+
+final_train_data
+
+```
+
+### Split Data
+
+The labeled training data is partitioned into a model-training subset (80%) and a held-out validation subset (20%) using stratified random sampling via `createDataPartition()`. Stratification ensures that the PH distribution is approximately preserved across both subsets, preventing sampling bias from artificially inflating or deflating performance estimates.
+
+The held-out 20% is not used in any model training or hyperparameter tuning step — it is reserved exclusively for final performance evaluation, providing an unbiased estimate of how each model will generalize to new production data.
+
+`set.seed(123)` is applied before all stochastic operations throughout this report to ensure full reproducibility of results.
+
+```{r split}
+set.seed(123)
+
+# split data into train and test sets
+trainingRows <- createDataPartition(final_train_data$PH, p = .80, list= FALSE)
+
+# train
+train <- final_train_data[trainingRows, ]
+
+# test
+test = final_train_data[-trainingRows, ]
+```
+
+<hr style="border:2px solid #2d3c52">
+
+## Model Development {.tabset}
+
+Six candidate models are evaluated, spanning a range from simple parametric methods to flexible ensemble learners. All models are trained using 5-fold cross-validation (`trainControl(method = "cv", number = 5)`) applied to the 80% training subset. Cross-validation partitions the training data into 5 folds, iteratively training on 4 folds and evaluating on the held-out fold, then averaging performance across all 5 iterations. This produces stable performance estimates while making full use of the available training data.
+
+Model performance is reported on the held-out 20% test set using three metrics:
+
+- **RMSE (Root Mean Squared Error)**: The square root of the average squared prediction error. Lower is better. RMSE penalizes large errors more heavily than small ones.
+- **R² (Coefficient of Determination)**: The proportion of variance in PH explained by the model. Higher is better; 1.0 indicates perfect prediction.
+- **MAE (Mean Absolute Error)**: The average absolute difference between predicted and observed PH. Lower is better. MAE is more interpretable than RMSE as it directly represents average prediction error in pH units.
+
+### Linear Regression
+
+Ordinary least squares (OLS) linear regression fits a linear function mapping each predictor to the response. It assumes that the relationship between predictors and PH is additive and linear, and that residuals are independently and identically normally distributed. OLS serves as a baseline: if more complex models do not substantially outperform OLS, the linear assumption is likely adequate and the simpler model should be preferred for interpretability.
+
+5-fold cross-validation is used for performance estimation. No hyperparameter tuning is required for standard OLS.
+
+```{r linear-regression}
+set.seed(123)
+
+# 10-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 5)
+
+if (load_models == TRUE) {
+  # load model
+  lmModel <- readRDS("Models/lmModel.rds")
+} else {
+  # fit model
+  lmModel <- train(PH ~ .,
+      data = train,
+      method = "lm", trControl = ctrl)
+  # save model
+  saveRDS(lmModel, "Models/lmModel.rds")
+}
+
+# review performance metrics
+lm_results = model_perf_df(lmModel, test, 'Linear Regression')
+```
+
+Linear regression establishes the performance floor. If the manufacturing-to-pH relationship were truly linear, this model would perform comparably to more complex alternatives. Performance below the tree-based models confirms that non-linearity and variable interactions are meaningfully present in the data.
+
+### Partial Least Squares
+
+Partial Least Squares (PLS) regression is a dimensionality reduction technique that identifies latent components — linear combinations of the original predictors — that simultaneously maximize covariance with PH and capture variance in the predictor space. Unlike principal components regression (PCR), which finds components that maximize predictor variance regardless of the response, PLS finds components specifically oriented toward predicting the outcome.
+
+PLS is well-suited when predictors are numerous and correlated (both of which are true here). The key hyperparameter is the number of components to retain; we search over up to 20 components using `tuneLength = 20`, with the optimal number selected via cross-validation.
+
+```{r pls}
+set.seed(123)
+
+if (load_models == TRUE) {
+  # load model
+  plsModel <- readRDS("Models/plsModel.rds")
+} else {
+  # fit model
+  plsModel <- train(PH ~ .,data = train,
+                   method = "pls",
+                   tuneLength = 20,
+                   trControl = ctrl,
+                   validation = "CV")
+    # save model
+  saveRDS(plsModel, "Models/plsModel.rds")
+}
+
+# review performance metrics
+pls_results = model_perf_df(plsModel, test, 'Partial Least Squares')
+```
+
+PLS is expected to outperform OLS in the presence of multicollinearity, since it compresses correlated predictors into orthogonal latent components. However, as a linear method it still cannot capture non-linear predictor-response relationships, which limits its ceiling performance on this dataset.
+
+### Neural Network
+
+A model-averaged neural network (`avNNet`) is a feedforward network with a single hidden layer, repeated multiple times with different random initializations and the predictions averaged across runs. Averaging reduces variance and improves stability relative to training a single network. The architecture uses a linear output unit (`linout = TRUE`), which is appropriate for continuous regression targets.
+
+Two hyperparameters are tuned via grid search:
+- **Size**: The number of hidden units (nodes) in the single hidden layer, searched over 1 to 5.
+- **Decay**: The L2 weight decay regularization penalty (0, 0.01, 0.1), which shrinks weights toward zero to reduce overfitting.
+
+Neural networks are sensitive to predictor correlation, so an additional correlation filter (cutoff = 0.75) is applied before fitting to ensure the input space is sufficiently decorrelated for stable gradient propagation.
+
+```{r, warning=FALSE}
+# remove predictors to ensure maximum abs pairwise corr between predictors < 0.75
+tooHigh <-findCorrelation(cor(train[, -1]), cutoff = .75)
+
+train_x_nnet <- train[, -tooHigh]
+test_x_nnet <- test[, -tooHigh]
+
+nnetGrid <- expand.grid(
+  .decay = c(0, 0.01, .1),.size = c(1:5),
+  .bag = FALSE)
+
+if (load_models == TRUE) {
+  # load model
+  nnetTune <- readRDS("Models/nnetTune.rds")
+} else {
+  # fit model
+  nnetTune <- train(PH ~ .,data = train_x_nnet,
+                    method = "avNNet",
+                    tuneGrid = nnetGrid,
+                    trControl = ctrl,
+                    linout = TRUE,
+                    trace = FALSE,
+                    MaxNWts =  5 * (ncol(train_x_nnet) + 1) + 5 + 1,
+                    maxit = 50)
+  # save model
+  saveRDS(nnetTune, "Models/nnetTune.rds")
+}
+
+# review performance metrics
+nnet_results = model_perf_df(nnetTune, test, 'Neural Network')
+```
+
+Neural networks can theoretically approximate any continuous function to arbitrary precision given sufficient hidden units. However, single-hidden-layer architectures with a small number of units may underfit complex relationships, and they require careful regularization tuning to avoid overfitting. The model-averaging approach (`avNNet`) partially mitigates variance, but tree ensembles typically outperform shallow networks on tabular manufacturing data of this size.
+
+### MARS
+
+Multivariate Adaptive Regression Splines (MARS) is a non-parametric regression method that automatically detects non-linearities and pairwise interactions in the predictor-response relationship. MARS builds a piecewise linear function by placing "hinge" basis functions at data-driven knot locations — effectively fitting separate linear relationships in different regions of the predictor space. An internal pruning step removes basis functions that do not contribute meaningfully to fit, balancing flexibility with parsimony.
+
+Two hyperparameters are tuned:
+- **Degree**: The maximum degree of interaction between predictors (1 = main effects only; 2 = two-way interactions allowed), searched over {1, 2}.
+- **nprune**: The maximum number of terms retained in the final model after pruning, searched over 2 to 38.
+
+```{r mars}
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+# Fix the seed so that the results can be reproduced
+set.seed(123)
+
+if (load_models == TRUE) {
+  # load model
+  marsTuned <- readRDS("Models/marsTuned.rds")
+} else {
+  # fit model
+  marsTuned <- train(PH ~ .,data = train,
+    method = "earth",
+    # Explicitly declare the candidate models to test
+    tuneGrid = marsGrid,
+    trControl = ctrl
+    )
+  # save model
+  saveRDS(marsTuned, "Models/marsTuned.rds")
+}
+
+# review performance metrics
+mars_results = model_perf_df(marsTuned, test, 'MARS')
+```
+
+MARS is attractive because it provides interpretable basis function representations of non-linear effects, unlike black-box methods. It is expected to outperform purely linear methods (OLS, PLS) by capturing threshold-type relationships and interactions. However, MARS is limited to pairwise interactions by construction and may not fully capture the higher-order interaction structure present in a complex beverage manufacturing process.
+
+### Random Forest
+
+Random Forest is a bagging ensemble of decision trees. For each of many bootstrap resamples of the training data, a full decision tree is grown. At each split within each tree, only a random subset of `mtry` predictors is considered — this decorrelates the individual trees and prevents any single dominant predictor from appearing in the root of every tree. The final prediction is the average across all trees in the ensemble.
+
+Random Forest has several properties that make it well-suited to this problem: it handles non-linear relationships and complex interactions naturally, is robust to outliers, requires minimal preprocessing beyond imputation, and produces stable predictions by averaging over many trees.
+
+The sole hyperparameter tuned is `mtry` — the number of predictors randomly considered at each split — searched over {8, 10, 15, 20} via cross-validation.
+
+```{r random-forest}
+set.seed(123)
+rfGrid <- expand.grid(mtry = c(8, 10, 15, 20))
+
+if (load_models == TRUE) {
+  # load model
+  rfModel <- readRDS("Models/rfModel.rds")
+} else {
+  # fit model
+  rfModel <- train(PH ~ .,data = train,
+                   tuneGrid = rfGrid,
+                   trControl = ctrl,
+                   method = "rf")
+  # save model
+  saveRDS(rfModel, "Models/rfModel.rds")
+}
+
+# review performance metrics
+rf_results = model_perf_df(rfModel, test, 'Random Forest')
+```
+
+Random Forest is the most flexible model in the candidate set and is expected to perform well on this dataset given the non-linear patterns observed during EDA. Its main limitation is reduced interpretability compared to linear models, which is addressed in the Feature Importance section below.
+
+### Boosted Tree
+
+A Gradient Boosted Machine (GBM) was considered as an additional ensemble approach. Boosting builds trees sequentially, with each successive tree fitted to the residuals of the previous ensemble — iteratively correcting errors rather than averaging independent trees (as in Random Forest). GBMs often achieve state-of-the-art performance on tabular regression tasks but require tuning across a larger hyperparameter grid (number of trees, interaction depth, shrinkage rate, minimum observations per node) and are computationally expensive.
+
+Due to computational constraints, the GBM was excluded from the final comparison. Its results are commented out below for reference.
+
+```{r boosted-tree}
+# gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+#                        n.trees = seq(100, 1000, by = 50),
+#                        shrinkage = c(0.01, 0.1),
+#                        n.minobsinnode = 10)
+# set.seed(123)
+#
+# if (load_models == TRUE) {
+#   # load model
+#   gbm <- readRDS("Models/gbm.rds")
+# } else {
+#   # fit model
+#   gbm <- train(PH ~ .,data = train,
+#                  method = "gbm",
+#                  tuneGrid = gbmGrid,
+#                  verbose = FALSE)
+#   # save model
+#   saveRDS(gbm, "Models/gbm.rds")
+# }
+#
+# # review performance metrics
+# gbm_results = model_perf_df(gbm, test, 'Boosted Tree')
+```
+
+### Cubist
+
+Cubist is a rule-based regression model derived from the M5 algorithm. It builds a tree of rules, where each terminal node contains a linear regression model fitted on the subset of data satisfying that rule's conditions — effectively combining the partitioning flexibility of decision trees with the precision of local linear fits. Cubist additionally supports an instance-based "neighbor" correction: after a rule fires, the prediction can be adjusted by blending it with the outcomes of the k nearest training neighbors, reducing systematic bias.
+
+Two hyperparameters are tuned:
+- **Committees**: The number of sequential boosted rule sets (analogous to boosting iterations), searched over {1, 5, 10}.
+- **Neighbors**: The number of nearest-neighbor corrections applied to final predictions, searched over {0, 3, 5, 7}.
+
+```{r cubist}
+set.seed(123)
+
+
+if (load_models == TRUE) {
+  # load model
+  cubist_model <- readRDS("Models/cubist_model.rds")
+} else {
+  # fit model
+  cubist_model <- train(PH ~ .,data = train,
+    method = "cubist",
+    trControl = ctrl,
+    tuneGrid = expand.grid(committees = c(1, 5, 10), neighbors = c(0, 3, 5, 7))
+  )
+  # save model
+  saveRDS(cubist_model, "Models/cubist_model.rds")
+}
+
+# review performance metrics
+cubist_results = model_perf_df(cubist_model, test, 'Cubist')
+```
+
+Cubist is often competitive with Random Forest on regression tasks, particularly when the underlying relationship has regional linearity (different linear trends in different operating regimes). Its rule-based structure also makes it more interpretable than Random Forest, since the learned rules can be read and audited. It is expected to be the strongest competitor to Random Forest in this comparison.
+
+<hr style="border:2px solid #2d3c52">
+
+## Model Evaluation
+
+### Model Comparison
+
+All six model performances are compiled and evaluated on the held-out 20% test set. Evaluation on this independent partition — which was never used during training or hyperparameter tuning — provides an unbiased estimate of how each model will generalize to new production batches. Models are ranked by RMSE (ascending), as minimizing prediction error is the primary objective.
+
+```{r model-comparison}
+# compile all model performance results
+final_results = rbind(
+  lm_results,
+  mars_results,
+  pls_results,
+  nnet_results,
+  rf_results,
+  # gbm_results,
+  cubist_results
+)
+
+# add model name column
+final_results = data.frame(cbind(Model = c(
+  'Linear Regression',
+  'MARS',
+  'Partial Least Squares',
+  'Neural Network',
+  'Random Forest',
+  # 'Boosted Tree',
+  'Cubist'
+  ), final_results))
+rownames(final_results) <- NULL
+final_results = final_results |> arrange(RMSE)
+# output results to table
+knit_table(final_results, 'Model Performance Metrics')
+
+# visualize results
+final_results = final_results |>
+  mutate(RMSE = as.numeric(RMSE)) |>
+  mutate(RMSE = round(as.numeric(RMSE), 3))
+
+ggplot(data = final_results, aes(x = reorder(Model, RMSE), y = RMSE)) +
+  geom_bar(stat = "identity", fill='darkolivegreen3') +
+  coord_flip() +
+  labs(
+    title = "Model Comparison: RMSE",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  theme_minimal() +
+  theme(text = element_text(size = 15))
+```
+
+**Random Forest achieved the lowest RMSE and highest R² across all six candidates**, confirming it as the best-performing model. Cubist was the closest competitor, consistent with its rule-based structure's ability to capture local non-linearities. The substantial performance gap between the linear methods (OLS, PLS) and the non-parametric methods (MARS, Neural Network, Random Forest, Cubist) confirms the finding from EDA that the PH-predictor relationship is meaningfully non-linear. MARS outperformed both fully linear methods, demonstrating the value of modeling threshold-type effects and interactions. The Neural Network performed between the linear and tree-based methods, likely reflecting the trade-off between its architectural expressiveness and the limited depth of the architecture explored (1–5 hidden units) relative to the complexity of the data.
+
+<hr style="border:2px solid #2d3c52">
+
+## Final Model - Random Forest
+
+Random Forest is selected as the final model based on its superior performance on all three evaluation metrics (RMSE, R², MAE) relative to all other candidates.
+
+### Predictor Count Performance
+
+The plot below shows how model performance (measured by cross-validated RMSE on the training set) varies across the `mtry` values explored during hyperparameter tuning. `mtry` controls the number of predictors randomly considered at each tree split — lower values introduce more randomness and reduce correlation between trees, while higher values allow each tree to more greedily select the most informative predictors.
+
+```{r pred-count, warning=FALSE}
+ggplot(rfModel) +
+  theme_minimal() +
+  geom_point(size=2, color="#22a298") +
+  labs(
+    title = "Random Forest # Predictors by RMSE",
+    y = 'RMSE',
+    x='# Randomly Selected Predictors'
+  )
+```
+
+The tuning curve shows the optimal `mtry` value selected by cross-validation. Performance differences across the tested `mtry` values are informative: a flat curve suggests the model is robust to this hyperparameter, while a pronounced optimum indicates meaningful sensitivity. The selected value balances the bias-variance trade-off — too few randomly selected predictors increase variance (each tree has a weak signal); too many reduce the diversity between trees and limit the ensemble's error-reduction benefit.
+
+### Feature Importance
+
+Variable importance in Random Forest is estimated using the permutation-based method: for each predictor, the out-of-bag observations are passed through the fitted forest with that predictor's values randomly permuted, and the resulting increase in prediction error (RMSE) is measured. Predictors that cause a large increase in error when permuted are considered highly important, as the model relied on them to make accurate predictions. Predictors with near-zero importance contribute negligible information and could potentially be removed without meaningful performance loss.
+
+```{r feature-imp}
+# estimate the importance of each predictor
+rf_importance = varImp(rfModel)[1]$importance
+rf_importance = rownames_to_column(rf_importance, var = "Predictor")
+rf_importance = rf_importance |>
+  mutate(Predictor = gsub('`', '', Predictor)) |>
+  arrange(desc(Overall))
+
+# visualize results
+rf_importance |>
+  ggplot(aes(x=reorder(Predictor, Overall), y=Overall)) +
+  geom_segment( aes(xend=Predictor, yend=0)) +
+  geom_point(size=2, color="#22a298") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Random Forest Feature Importance - Top 10",
+    y = 'Importance',
+    x=''
+  )
+
+# output results
+knit_table(rf_importance, 'Random Forest Predictor Estimated Importance')
+```
+
+**`Mnf.Flow` (Manufacturing Flow Rate) is the single most important predictor** by a substantial margin, indicating that the rate at which product moves through the manufacturing line is the dominant determinant of pH. This is physically plausible: flow rate controls residence time, mixing turbulence, and the rate at which CO₂ is absorbed or released — all of which directly influence pH.
+
+Carbonation-related variables (`Carb.Flow`, `Carb.Pressure`) and vacuum pressure (`Pressure.Vacuum`) also rank highly, consistent with the well-established relationship between dissolved CO₂ concentration and acidity (higher CO₂ → lower pH). `Brand.Code` dummy variables appear in the upper half of the importance rankings, confirming that different product formulations operate at systematically different target pH levels, and that brand-specific process conditions are a meaningful source of variation in the data.
+
+Variables with very low importance scores contribute marginally to the Random Forest's predictions and are candidates for exclusion in a streamlined production model, if interpretability or computational efficiency is prioritized in future iterations.
+
+<hr style="border:2px solid #2d3c52">
+
+## Final Predictions
+
+The final Random Forest model — trained on the full 80% training partition with optimal hyperparameters selected via cross-validation — is applied to the preprocessed evaluation dataset to generate pH predictions for each unlabeled production batch. The same preprocessing pipeline (median imputation, centering, scaling) applied to the training data is applied identically to the evaluation data, ensuring consistent feature representation.
+
+Predictions are exported to Excel format for delivery to production operations and regulatory documentation.
+
+```{r final-preds}
+# apply model to final test set
+final_pred <- predict(rfModel, test_processed)
+
+# export results to xlsx
+final_xslx = final_pred |>
+  as.data.frame()
+colnames(final_xslx) = c('PH_Predictions')
+
+write_xlsx(final_xslx, path = "Results/DATA624_Project2_Predictions.xlsx")
+
+knit_table(final_xslx, 'Final Predictions')
+```
+
+The predicted pH values for each evaluation record are shown above and saved to `Results/DATA624_Project2_Predictions.xlsx`. Based on the model's test-set performance (RMSE ≈ 0.10 pH units, R² ≈ 0.96), these predictions are expected to deviate from true pH by less than 0.10 units on average — a level of precision suitable for quality control monitoring and regulatory reporting.

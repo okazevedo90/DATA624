@@ -13,7 +13,7 @@ output:
 
 ## Overview
 
-This report documents the full modeling pipeline developed to predict the pH of beverage products manufactured at ABC Beverage. pH is a critical quality control metric — it directly influences product taste, microbial stability, and regulatory compliance. New regulations require that ABC Beverage not only monitor pH, but document the manufacturing factors that drive it and demonstrate a systematic, data-driven approach to its prediction.
+This report documents the full modeling pipeline developed to predict the pH of beverage products manufactured at ABC Beverage. pH is a critical quality control metric as it directly influences product taste, microbial stability, and regulatory compliance. New regulations require that ABC Beverage not only monitor pH, but document the manufacturing factors that drive it and demonstrate a systematic, data-driven approach to its prediction.
 
 The analysis proceeds in four stages: (1) exploratory data analysis to understand the structure, quality, and relationships within the historical production data; (2) data preprocessing to prepare the feature set for modeling; (3) comparative evaluation of six candidate predictive models; and (4) selection and interpretation of the final model, followed by generation of pH predictions for the evaluation dataset.
 
@@ -96,9 +96,6 @@ We begin by examining the data types, dimensions, and summary statistics for eac
 ```{r data-exploration}
 # View dataset structure
 str(train_data)
-
-# Summary statistics
-# summary(train_data)
 
 # Dataset dimensions
 knit_table(
@@ -225,7 +222,7 @@ for(col in predictor_cols){
 }
 ```
 
-The scatterplots reveal a mix of relationships: some predictors (e.g., `Mnf.Flow`) show a discernible trend with PH, while others appear diffuse or non-linear. The non-linear, heteroscedastic patterns visible in several plots indicate that linear methods alone will be insufficient to fully capture the predictor-response relationships — this is consistent with a complex, multi-stage manufacturing process where pH is driven by interactions among multiple variables simultaneously rather than any single linear effect.
+The scatterplots reveal a mix of relationships: some predictors (e.g., `Mnf.Flow`) show a discernible trend with PH, while others appear diffuse or non-linear. The non-linear, heteroscedastic patterns visible in several plots indicate that linear methods alone will be insufficient to fully capture the predictor-response relationships. This is consistent with a complex, multi-stage manufacturing process where pH is driven by interactions among multiple variables simultaneously rather than any single linear effect.
 
 <hr style="border:2px solid #2d3c52">
 
@@ -237,7 +234,7 @@ Data preprocessing transforms the raw dataset into a form suitable for model tra
 
 `Brand Code` is the only categorical variable in the dataset. It identifies the product formulation (brands A, B, C, D), and different brands are likely manufactured under distinct process conditions that influence pH. Most regression and ensemble algorithms require numeric inputs, so `Brand Code` is converted to a set of binary dummy variables using one-hot encoding via `dummy_cols()`. Missing `Brand Code` values are assigned an "Unknown" category before encoding rather than dropped, preserving those observations for modeling.
 
-The same encoding scheme — including the same factor levels — is applied to the evaluation dataset to ensure the test feature matrix is structurally identical to the training feature matrix.
+The same encoding scheme, including the same factor levels, is applied to the evaluation dataset to ensure the test feature matrix is structurally identical to the training feature matrix.
 
 ```{r feature-engineering}
 # Convert Brand Code to categorical variable
@@ -291,7 +288,7 @@ x <- train_data %>%
 
 #### Remove Near-Zero Variance Variables
 
-Variables with near-zero variance carry minimal predictive information — if a variable takes the same value (or nearly the same value) for almost every observation, it cannot differentiate between high-pH and low-pH batches. Including such variables wastes model capacity and can destabilize coefficient estimates. `nearZeroVar()` from the `caret` package identifies predictors where the ratio of the most common value's frequency to the second most common value's frequency exceeds a threshold, or where the percentage of unique values is very low.
+Variables with near-zero variance carry minimal predictive information. If a variable takes the same value (or nearly the same value) for almost every observation, it cannot differentiate between high-pH and low-pH batches. Including such variables wastes model capacity and can destabilize coefficient estimates. `nearZeroVar()` from the `caret` package identifies predictors where the ratio of the most common value's frequency to the second most common value's frequency exceeds a threshold, or where the percentage of unique values is very low.
 
 ```{r low variance}
 # Identify low-information predictors
@@ -309,7 +306,7 @@ test_processed <- test_data[, names(x)]
 
 #### Remove Highly Correlated Variables
 
-Highly correlated predictor pairs are redundant: they encode essentially the same information about the response. Including both inflates the effective dimensionality of the feature space and, for linear models specifically, causes multicollinearity that inflates variance in coefficient estimates and degrades interpretability. `findCorrelation()` uses the correlation matrix to identify variables that should be removed to ensure all remaining pairwise correlations fall below the specified threshold (|r| < 0.90). When a pair exceeds the threshold, the variable with the larger mean absolute correlation with all other predictors is removed — removing the most redundant variable first.
+Highly correlated predictor pairs are redundant: they encode essentially the same information about the response. Including both inflates the effective dimensionality of the feature space and, for linear models specifically, causes multicollinearity that inflates variance in coefficient estimates and degrades interpretability. `findCorrelation()` uses the correlation matrix to identify variables that should be removed to ensure all remaining pairwise correlations fall below the specified threshold (|r| < 0.90). When a pair exceeds the threshold, the variable with the larger mean absolute correlation with all other predictors is removed, because it removes the most redundant variable first.
 
 ```{r high-corr}
 # Keep numeric variables only
@@ -343,7 +340,7 @@ if(length(highCorr) > 0){
 
 Three preprocessing transformations are applied via `caret`'s `preProcess()` function:
 
-1. **Median Imputation**: Missing values in each predictor are replaced with that predictor's median value computed from the training set. Median imputation is preferred over mean imputation when outliers are present (as observed in the EDA), since the median is a more robust central tendency measure. Importantly, the median values are computed on the training data only and then applied to both training and test sets — this prevents data leakage from the evaluation set into the preprocessing step.
+1. **Median Imputation**: Missing values in each predictor are replaced with that predictor's median value computed from the training set. Median imputation is preferred over mean imputation when outliers are present (as observed in the EDA), since the median is a more robust central tendency measure. Importantly, the median values are computed on the training data only and then applied to both training and test sets. This prevents data leakage from the evaluation set into the preprocessing step.
 
 2. **Centering**: Each predictor is shifted by subtracting its training-set mean, resulting in zero-mean predictors. Centering ensures that the model intercept represents the predicted PH when all predictors are at their average values, and is particularly important for algorithms that use gradient descent or penalized regression.
 
@@ -352,7 +349,7 @@ Three preprocessing transformations are applied via `caret`'s `preProcess()` fun
 Together, centering and scaling standardize the feature space, facilitating fair comparison of coefficient magnitudes and improving numerical stability across all model types.
 
 ```{r preprocessing}
-# Apply:
+# Apply the preprocessing transformations:
 # 1. Median imputation
 # 2. Centering
 # 3. Scaling
@@ -381,7 +378,7 @@ test_processed <- predict(
 
 ### Final Data Checks
 
-Before proceeding to modeling, we verify that the preprocessing pipeline successfully eliminated all missing values and confirm the final feature matrix dimensions. Any remaining missingness at this stage would indicate variables with 100% missingness that median imputation cannot resolve — such variables would need to be dropped entirely.
+Before proceeding to modeling, we verify that the preprocessing pipeline successfully eliminated all missing values and confirm the final feature matrix dimensions. Any remaining missingness at this stage would indicate variables with 100% missingness that median imputation cannot resolve. In that case, such variables would need to be dropped entirely.
 
 ```{r final-check}
 # Check for remaining missing values
@@ -436,7 +433,7 @@ write_xlsx(
 Records with missing PH values in the training set are dropped. Because PH is the response variable, these rows cannot contribute to parameter estimation and must be excluded.
 
 ```{r handle-missing-target}
-### Handle Missing Target Values
+# Handle Missing Target Values
 
 # Check how many missing PH values exist
 sum(is.na(final_train_data$PH))
@@ -456,7 +453,7 @@ sum(is.na(final_train_data$PH))
 
 The labeled training data is partitioned into a model-training subset (80%) and a held-out validation subset (20%) using stratified random sampling via `createDataPartition()`. Stratification ensures that the PH distribution is approximately preserved across both subsets, preventing sampling bias from artificially inflating or deflating performance estimates.
 
-The held-out 20% is not used in any model training or hyperparameter tuning step — it is reserved exclusively for final performance evaluation, providing an unbiased estimate of how each model will generalize to new production data.
+The held-out 20% is not used in any model training or hyperparameter tuning step. It is reserved exclusively for final performance evaluation, providing an unbiased estimate of how each model will generalize to new production data.
 
 `set.seed(123)` is applied before all stochastic operations throughout this report to ensure full reproducibility of results.
 
@@ -517,7 +514,7 @@ Linear regression establishes the performance floor. If the manufacturing-to-pH 
 
 ### Partial Least Squares
 
-Partial Least Squares (PLS) regression is a dimensionality reduction technique that identifies latent components — linear combinations of the original predictors — that simultaneously maximize covariance with PH and capture variance in the predictor space. Unlike principal components regression (PCR), which finds components that maximize predictor variance regardless of the response, PLS finds components specifically oriented toward predicting the outcome.
+Partial Least Squares (PLS) regression is a dimensionality reduction technique that identifies latent components, linear combinations of the original predictors, that simultaneously maximize covariance with PH and capture variance in the predictor space. Unlike principal components regression (PCR), which finds components that maximize predictor variance regardless of the response, PLS finds components specifically oriented toward predicting the outcome.
 
 PLS is well-suited when predictors are numerous and correlated (both of which are true here). The key hyperparameter is the number of components to retain; we search over up to 20 components using `tuneLength = 20`, with the optimal number selected via cross-validation.
 
@@ -590,7 +587,7 @@ Neural networks can theoretically approximate any continuous function to arbitra
 
 ### MARS
 
-Multivariate Adaptive Regression Splines (MARS) is a non-parametric regression method that automatically detects non-linearities and pairwise interactions in the predictor-response relationship. MARS builds a piecewise linear function by placing "hinge" basis functions at data-driven knot locations — effectively fitting separate linear relationships in different regions of the predictor space. An internal pruning step removes basis functions that do not contribute meaningfully to fit, balancing flexibility with parsimony.
+Multivariate Adaptive Regression Splines (MARS) is a non-parametric regression method that automatically detects non-linearities and pairwise interactions in the predictor-response relationship. MARS builds a piecewise linear function by placing "hinge" basis functions at data-driven knot locations effectively fitting separate linear relationships in different regions of the predictor space. An internal pruning step removes basis functions that do not contribute meaningfully to fit, balancing flexibility with parsimony.
 
 Two hyperparameters are tuned:
 - **Degree**: The maximum degree of interaction between predictors (1 = main effects only; 2 = two-way interactions allowed), searched over {1, 2}.
@@ -624,11 +621,11 @@ MARS is attractive because it provides interpretable basis function representati
 
 ### Random Forest
 
-Random Forest is a bagging ensemble of decision trees. For each of many bootstrap resamples of the training data, a full decision tree is grown. At each split within each tree, only a random subset of `mtry` predictors is considered — this decorrelates the individual trees and prevents any single dominant predictor from appearing in the root of every tree. The final prediction is the average across all trees in the ensemble.
+Random Forest is a bagging ensemble of decision trees. For each of many bootstrap resamples of the training data, a full decision tree is grown. At each split within each tree, only a random subset of `mtry` predictors is considered. This decorrelates the individual trees and prevents any single dominant predictor from appearing in the root of every tree. The final prediction is the average across all trees in the ensemble.
 
 Random Forest has several properties that make it well-suited to this problem: it handles non-linear relationships and complex interactions naturally, is robust to outliers, requires minimal preprocessing beyond imputation, and produces stable predictions by averaging over many trees.
 
-The sole hyperparameter tuned is `mtry` — the number of predictors randomly considered at each split — searched over {8, 10, 15, 20} via cross-validation.
+The sole hyperparameter tuned is `mtry`, which is the number of predictors randomly considered at each split, searched over {8, 10, 15, 20} via cross-validation.
 
 ```{r random-forest}
 set.seed(123)
@@ -655,7 +652,7 @@ Random Forest is the most flexible model in the candidate set and is expected to
 
 ### Boosted Tree
 
-A Gradient Boosted Machine (GBM) was considered as an additional ensemble approach. Boosting builds trees sequentially, with each successive tree fitted to the residuals of the previous ensemble — iteratively correcting errors rather than averaging independent trees (as in Random Forest). GBMs often achieve state-of-the-art performance on tabular regression tasks but require tuning across a larger hyperparameter grid (number of trees, interaction depth, shrinkage rate, minimum observations per node) and are computationally expensive.
+A Gradient Boosted Machine (GBM) was considered as an additional ensemble approach. Boosting builds trees sequentially, with each successive tree fitted to the residuals of the previous ensemble. Iteratively correcting errors rather than averaging independent trees (as in Random Forest). GBMs often achieve state-of-the-art performance on tabular regression tasks but require tuning across a larger hyperparameter grid (number of trees, interaction depth, shrinkage rate, minimum observations per node) and are computationally expensive.
 
 Due to computational constraints, the GBM was excluded from the final comparison. Its results are commented out below for reference.
 
@@ -685,7 +682,7 @@ Due to computational constraints, the GBM was excluded from the final comparison
 
 ### Cubist
 
-Cubist is a rule-based regression model derived from the M5 algorithm. It builds a tree of rules, where each terminal node contains a linear regression model fitted on the subset of data satisfying that rule's conditions — effectively combining the partitioning flexibility of decision trees with the precision of local linear fits. Cubist additionally supports an instance-based "neighbor" correction: after a rule fires, the prediction can be adjusted by blending it with the outcomes of the k nearest training neighbors, reducing systematic bias.
+Cubist is a rule-based regression model derived from the M5 algorithm. It builds a tree of rules, where each terminal node contains a linear regression model fitted on the subset of data satisfying that rule's conditions. This effectively combines the partitioning flexibility of decision trees with the precision of local linear fits. Cubist additionally supports an instance-based "neighbor" correction: after a rule fires, the prediction can be adjusted by blending it with the outcomes of the k nearest training neighbors, reducing systematic bias.
 
 Two hyperparameters are tuned:
 - **Committees**: The number of sequential boosted rule sets (analogous to boosting iterations), searched over {1, 5, 10}.
@@ -721,7 +718,7 @@ Cubist is often competitive with Random Forest on regression tasks, particularly
 
 ### Model Comparison
 
-All six model performances are compiled and evaluated on the held-out 20% test set. Evaluation on this independent partition — which was never used during training or hyperparameter tuning — provides an unbiased estimate of how each model will generalize to new production batches. Models are ranked by RMSE (ascending), as minimizing prediction error is the primary objective.
+All six model performances are compiled and evaluated on the held-out 20% test set. Evaluation on this independent partition, which was never used during training or hyperparameter tuning, provides an unbiased estimate of how each model will generalize to new production batches. Models are ranked by RMSE (ascending), as minimizing prediction error is the primary objective.
 
 ```{r model-comparison}
 # compile all model performance results
@@ -821,7 +818,7 @@ rf_importance |>
 knit_table(rf_importance, 'Random Forest Predictor Estimated Importance')
 ```
 
-**`Mnf.Flow` (Manufacturing Flow Rate) is the single most important predictor** by a substantial margin, indicating that the rate at which product moves through the manufacturing line is the dominant determinant of pH. This is physically plausible: flow rate controls residence time, mixing turbulence, and the rate at which CO₂ is absorbed or released — all of which directly influence pH.
+**`Mnf.Flow` (Manufacturing Flow Rate) is the single most important predictor** by a substantial margin, indicating that the rate at which product moves through the manufacturing line is the dominant determinant of pH. This is physically plausible: flow rate controls residence time, mixing turbulence, and the rate at which CO₂ is absorbed or released. All of these factors directly influence pH.
 
 Carbonation-related variables (`Carb.Flow`, `Carb.Pressure`) and vacuum pressure (`Pressure.Vacuum`) also rank highly, consistent with the well-established relationship between dissolved CO₂ concentration and acidity (higher CO₂ → lower pH). `Brand.Code` dummy variables appear in the upper half of the importance rankings, confirming that different product formulations operate at systematically different target pH levels, and that brand-specific process conditions are a meaningful source of variation in the data.
 
@@ -831,7 +828,7 @@ Variables with very low importance scores contribute marginally to the Random Fo
 
 ## Final Predictions
 
-The final Random Forest model — trained on the full 80% training partition with optimal hyperparameters selected via cross-validation — is applied to the preprocessed evaluation dataset to generate pH predictions for each unlabeled production batch. The same preprocessing pipeline (median imputation, centering, scaling) applied to the training data is applied identically to the evaluation data, ensuring consistent feature representation.
+The final Random Forest model is trained on the full 80% training partition with optimal hyperparameters selected via cross-validation. The model is applied to the preprocessed evaluation dataset to generate pH predictions for each unlabeled production batch. The same preprocessing pipeline (median imputation, centering, scaling) applied to the training data is applied identically to the evaluation data, ensuring consistent feature representation.
 
 Predictions are exported to Excel format for delivery to production operations and regulatory documentation.
 
@@ -849,7 +846,7 @@ write_xlsx(final_xslx, path = "Results/DATA624_Project2_Predictions.xlsx")
 knit_table(final_xslx, 'Final Predictions')
 ```
 
-The predicted pH values for each evaluation record are shown above and saved to `Results/DATA624_Project2_Predictions.xlsx`. Based on the model's test-set performance (RMSE ≈ 0.10 pH units, R² ≈ 0.96), these predictions are expected to deviate from true pH by less than 0.10 units on average — a level of precision suitable for quality control monitoring and regulatory reporting.
+The predicted pH values for each evaluation record are shown above and saved to `Results/DATA624_Project2_Predictions.xlsx`. Based on the model's test-set performance (RMSE ≈ 0.10 pH units, R² ≈ 0.96), these predictions are expected to deviate from true pH by less than 0.10 units on average which is a level of precision suitable for quality control monitoring and regulatory reporting.
 
 
 

@@ -850,3 +850,6 @@ knit_table(final_xslx, 'Final Predictions')
 ```
 
 The predicted pH values for each evaluation record are shown above and saved to `Results/DATA624_Project2_Predictions.xlsx`. Based on the model's test-set performance (RMSE ≈ 0.10 pH units, R² ≈ 0.96), these predictions are expected to deviate from true pH by less than 0.10 units on average — a level of precision suitable for quality control monitoring and regulatory reporting.
+
+
+

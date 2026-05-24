@@ -450,9 +450,6 @@ final_train_data <- final_train_data %>%
 
 # Verify removal
 sum(is.na(final_train_data$PH))
-
-final_train_data
-
 ```
 
 ### Split Data
